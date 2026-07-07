@@ -5,7 +5,13 @@
 > carries its provenance, every recall reproduces its ranking, and every stale
 > memory flags its own drift.
 
-`pip install mneme-memory` · zero runtime dependencies · fully local · deterministic
+**Install today** (PyPI release imminent):
+
+```bash
+pip install git+https://github.com/HarperZ9/mneme.git
+```
+
+Zero runtime dependencies · fully local · deterministic · MIT.
 
 ## Why another memory library
 
