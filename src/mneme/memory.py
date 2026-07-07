@@ -107,6 +107,12 @@ class AgentMemory:
         from .consolidate import consolidate
         return consolidate(self, session, dup_threshold=dup_threshold, apply=apply)
 
+    def entity_graph(self, *, user: str | None = None, session: str | None = None) -> dict:
+        """Build a grounded entity graph (typed relations + named entities) over
+        the scoped memories; every edge cites its source atom (drift-checkable)."""
+        from .entity import entity_graph
+        return entity_graph(self, user=user, session=session)
+
     # -- accountable editing -------------------------------------------------
     def forget(self, memory_id: str, reason: str = "") -> dict | None:
         """Delete a memory, leaving a tombstone in the hash-chained audit log:

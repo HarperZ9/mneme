@@ -130,6 +130,11 @@ def build_parser() -> argparse.ArgumentParser:
     ch.add_argument("memory_id")
     ch.set_defaults(func=cmd_chain)
 
+    eg = sub.add_parser("entity-graph", help="build a grounded entity graph (typed relations + named entities)")
+    eg.add_argument("--user", default=None)
+    eg.add_argument("--session", default=None)
+    eg.set_defaults(func=cmd_entity_graph)
+
     cons = sub.add_parser("consolidate", help="merge near-duplicate memories (audit-tombstoned); surface contradictions")
     cons.add_argument("--session", default=None)
     cons.add_argument("--plan", action="store_true", help="show the plan without applying it")
@@ -188,6 +193,11 @@ def cmd_chain(args) -> int:
         print(f"no memory with id {args.memory_id!r}", file=sys.stderr)
         return 2
     print(json.dumps(chain, indent=2))
+    return 0
+
+
+def cmd_entity_graph(args) -> int:
+    print(json.dumps(AgentMemory(args.state).entity_graph(user=args.user, session=args.session), indent=2))
     return 0
 
 

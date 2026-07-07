@@ -16,6 +16,10 @@ a re-derivable benchmark, and accountable forgetting.
   recency component rides every hit and the rule is in the receipt.
 - **Consolidation** — merge near-duplicate memories (audit-tombstoned) and
   surface contradiction candidates without auto-resolving them.
+- **Multi-user / multi-session** — per-tenant isolation (`user=`) and
+  cross-session recall (`user=X, session=None`); one user never recalls another's.
+- **Entity graph** — grounded typed relations (lives_in, works_in, allergic_to,
+  …) + named entities, every edge citing its source atom (drift-checkable).
 - **Provenance receipt** on every memory (sources, extractor, criterion, hash).
 - **Re-derivable recall receipt** — ranked hits with bm25/vector/fused scores
   and the fusion rule; re-run the scorer, reproduce the ranking.
