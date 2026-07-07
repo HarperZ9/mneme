@@ -89,6 +89,13 @@ class AgentMemory:
         from .compose import to_crucible_thesis
         return to_crucible_thesis(self, session, layer)
 
+    def consolidate(self, session: str | None = None, *, dup_threshold: float = 0.6,
+                    apply: bool = True) -> dict:
+        """Merge near-duplicate memories (audit-tombstoned) and surface
+        contradiction candidates without auto-resolving them."""
+        from .consolidate import consolidate
+        return consolidate(self, session, dup_threshold=dup_threshold, apply=apply)
+
     # -- accountable editing -------------------------------------------------
     def forget(self, memory_id: str, reason: str = "") -> dict | None:
         """Delete a memory, leaving a tombstone in the hash-chained audit log:

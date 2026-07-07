@@ -125,6 +125,11 @@ def build_parser() -> argparse.ArgumentParser:
     ch.add_argument("memory_id")
     ch.set_defaults(func=cmd_chain)
 
+    cons = sub.add_parser("consolidate", help="merge near-duplicate memories (audit-tombstoned); surface contradictions")
+    cons.add_argument("--session", default=None)
+    cons.add_argument("--plan", action="store_true", help="show the plan without applying it")
+    cons.set_defaults(func=cmd_consolidate)
+
     xc = sub.add_parser("to-crucible", help="export memories as a crucible thesis so an independent organ can certify their faithfulness")
     xc.add_argument("--session", default=None)
     xc.add_argument("--layer", default="L1")
@@ -178,6 +183,12 @@ def cmd_chain(args) -> int:
         print(f"no memory with id {args.memory_id!r}", file=sys.stderr)
         return 2
     print(json.dumps(chain, indent=2))
+    return 0
+
+
+def cmd_consolidate(args) -> int:
+    r = AgentMemory(args.state).consolidate(args.session, apply=not args.plan)
+    print(json.dumps(r, indent=2))
     return 0
 
 
