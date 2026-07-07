@@ -27,10 +27,14 @@ _L1_CRITERION = "atomic user fact"
 class AgentMemory:
     def __init__(self, path: str | Path = ":memory:", *,
                  extractor: Extractor | None = None,
-                 embedder: Embedder | None = None):
+                 embedder: Embedder | None = None,
+                 embed=None):
+        from .embed import resolve_embedder
         self.store = Store(path)
         self.extractor = extractor or RuleExtractor()
-        self.embedder = embedder
+        # `embed="ngram"` turns on the zero-dep local vector channel; `embedder=`
+        # takes a real embedding model. embedder wins if both are given.
+        self.embedder = embedder or resolve_embedder(embed)
 
     # -- ingest --------------------------------------------------------------
     def remember(self, session: str, turns: Sequence[dict]) -> dict:
