@@ -73,6 +73,27 @@ An embedder (`AgentMemory(..., embedder=fn)`) turns on the vector channel; an
 LLM `Extractor` plugs in for richer atoms. Neither is required — the
 deterministic floor works with no model and no API.
 
+## Agents plug in over MCP
+
+```bash
+mneme mcp          # JSON-RPC 2.0 over stdio; MNEME_STATE points at the DB
+```
+
+Tools: `mneme.remember`, `mneme.recall`, `mneme.drift`, `mneme.provenance`. A
+recall through MCP returns the same re-derivable receipt, so the agent (or its
+operator) can see and re-check why a memory was surfaced — the accountability
+travels with the tool result.
+
+## Scenarios (L2)
+
+```bash
+mneme scenarios alice     # cluster the session's atoms into scene blocks
+```
+
+Atoms sharing a theme cluster deterministically into L2 scenarios; each scenario
+cites its atoms, so it is drift-checkable too (a scenario whose atom is gone is
+`UNVERIFIABLE`, never silently kept).
+
 ## Guarantees
 
 - **Zero runtime dependencies** (stdlib `sqlite3`). `pytest` is the only dev dep.

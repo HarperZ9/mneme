@@ -70,6 +70,23 @@ class AgentMemory:
         r = self.store.provenance(memory_id)
         return r.as_dict() if r else None
 
+    # -- scenarios (L2) ------------------------------------------------------
+    def build_scenarios(self, session: str, *, min_shared: int = 1) -> dict:
+        """Cluster this session's atoms into L2 scenarios (scene blocks), each
+        citing its member atoms so it stays drift-checkable. Deterministic."""
+        from .scenario import cluster_atoms
+
+        atoms = [{"id": a["id"], "text": a["text"]}
+                 for a in self.store.memories(layer="L1", session=session)]
+        scenarios = cluster_atoms(atoms, min_shared=min_shared)
+        out = []
+        for sc in scenarios:
+            self.store.add_memory(sc.id, "L2", sc.text, sc.atom_ids, "cluster/v1",
+                                  "atoms sharing a theme", session=session)
+            out.append({"scenario_id": sc.id, "atoms": len(sc.atom_ids),
+                        "theme": list(sc.theme)})
+        return {"session": session, "scenarios": len(out), "blocks": out}
+
     # -- persona (L3) --------------------------------------------------------
     def persona(self, session: str) -> dict:
         """Synthesize a persona from this session's atoms. Deterministic floor:

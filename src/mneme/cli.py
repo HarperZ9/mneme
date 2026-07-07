@@ -92,7 +92,26 @@ def build_parser() -> argparse.ArgumentParser:
     prov = sub.add_parser("provenance", help="show a memory's provenance receipt")
     prov.add_argument("memory_id")
     prov.set_defaults(func=cmd_provenance)
+
+    sc = sub.add_parser("scenarios", help="cluster a session's atoms into L2 scene blocks")
+    sc.add_argument("session")
+    sc.add_argument("--min-shared", type=int, default=1)
+    sc.set_defaults(func=cmd_scenarios)
+
+    mcp = sub.add_parser("mcp", help="serve mneme over MCP stdio (agent memory tools)")
+    mcp.set_defaults(func=cmd_mcp)
     return p
+
+
+def cmd_scenarios(args) -> int:
+    mem = AgentMemory(args.state)
+    print(json.dumps(mem.build_scenarios(args.session, min_shared=args.min_shared), indent=2))
+    return 0
+
+
+def cmd_mcp(args) -> int:
+    from .mcp import serve
+    return serve()
 
 
 def main(argv=None) -> int:
