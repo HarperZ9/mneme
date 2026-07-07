@@ -1,0 +1,24 @@
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+
+# mneme state (never commit a user's memory DB)
+*.db
+mneme.db
+
+# secrets / env
+.env
+.env.*
+*.key
+*.token
+
+# os / editor
+.DS_Store
+Thumbs.db
+*.swp
