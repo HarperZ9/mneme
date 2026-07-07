@@ -8,8 +8,14 @@ a re-derivable benchmark, and accountable forgetting.
 
 - **4-tier memory** — L0 turns, L1 atoms (deterministic rule extraction), L2
   scenarios (union-find clustering), L3 persona; every layer cites its sources.
-- **Hybrid retrieval** — BM25 (pure Python) fused with an optional embedding
-  channel by Reciprocal Rank Fusion; keyword / vector / hybrid.
+- **Hybrid retrieval** — BM25 (pure Python) fused with a vector channel by
+  Reciprocal Rank Fusion; keyword / vector / hybrid. A **zero-dep local n-gram
+  vector channel** (`embed="ngram"`) gives fuzzy/morphological matching out of
+  the box (no embedding API); a real embedding model plugs in as an edge.
+- **Recency-weighted recall** — prefer recent memories transparently; the
+  recency component rides every hit and the rule is in the receipt.
+- **Consolidation** — merge near-duplicate memories (audit-tombstoned) and
+  surface contradiction candidates without auto-resolving them.
 - **Provenance receipt** on every memory (sources, extractor, criterion, hash).
 - **Re-derivable recall receipt** — ranked hits with bm25/vector/fused scores
   and the fusion rule; re-run the scorer, reproduce the ranking.
@@ -19,5 +25,11 @@ a re-derivable benchmark, and accountable forgetting.
   the deletion itself is auditable and tamper-evident.
 - **Token-economics benchmark** — reduction AND answer-recall, re-derivable
   (built-in scenario: 76.6% reduction at 100% answer-recall).
-- **MCP server** — remember/recall/drift/provenance/forget/audit over stdio.
-- Zero runtime dependencies (stdlib sqlite3); deterministic; 30 tests.
+- **Ecosystem composition** — ingest gather items so a recalled memory traces
+  to its web source (`mneme chain`); export memories as a crucible thesis so an
+  independent organ certifies their faithfulness (`mneme to-crucible`).
+- **White-box inspector** — a self-contained HTML view of every layer with
+  provenance, drift, and the audit log (`mneme inspect`).
+- **MCP server** — 6 tools over stdio; **runnable tour** (`examples/tour.py`).
+- Zero runtime dependencies (stdlib sqlite3); deterministic; 62 tests; CI on
+  3 OS × 3 Python + a wheel-install job.
