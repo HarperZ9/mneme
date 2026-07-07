@@ -125,6 +125,11 @@ def build_parser() -> argparse.ArgumentParser:
     ch.add_argument("memory_id")
     ch.set_defaults(func=cmd_chain)
 
+    xc = sub.add_parser("to-crucible", help="export memories as a crucible thesis so an independent organ can certify their faithfulness")
+    xc.add_argument("--session", default=None)
+    xc.add_argument("--layer", default="L1")
+    xc.set_defaults(func=cmd_to_crucible)
+
     bench = sub.add_parser("bench", help="token-economics benchmark: reduction AND answer-recall, re-derivable")
     bench.add_argument("--turns", default=None, help="JSON conversation file (default: built-in scenario)")
     bench.add_argument("--probes", default=None, help="JSON probes file [{query,answer_contains}]")
@@ -173,6 +178,11 @@ def cmd_chain(args) -> int:
         print(f"no memory with id {args.memory_id!r}", file=sys.stderr)
         return 2
     print(json.dumps(chain, indent=2))
+    return 0
+
+
+def cmd_to_crucible(args) -> int:
+    print(json.dumps(AgentMemory(args.state).to_crucible(args.session, args.layer), indent=2))
     return 0
 
 

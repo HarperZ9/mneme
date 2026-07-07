@@ -83,6 +83,12 @@ class AgentMemory:
         from .ingest import provenance_chain
         return provenance_chain(self, memory_id)
 
+    def to_crucible(self, session: str | None = None, layer: str = "L1") -> dict:
+        """Export memories as a crucible thesis + drift-derived measurements, so
+        an independent judgment organ can certify the memory's faithfulness."""
+        from .compose import to_crucible_thesis
+        return to_crucible_thesis(self, session, layer)
+
     # -- accountable editing -------------------------------------------------
     def forget(self, memory_id: str, reason: str = "") -> dict | None:
         """Delete a memory, leaving a tombstone in the hash-chained audit log:

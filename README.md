@@ -94,6 +94,17 @@ traces to the exact bytes fetched from the exact source (`re-fetch the ref,
 re-hash, confirm it equals the origin sha256`). Any intake tool that emits that
 shape composes — mneme never imports gather.
 
+And the loop closes at the other end. `mneme to-crucible` exports memories as a
+[crucible](https://github.com/HarperZ9/crucible) thesis — each memory a claim
+whose falsification is "its source no longer supports it" — so an **independent
+judgment organ** certifies the memory's faithfulness, not mneme's own word:
+
+```
+gather (intake) --> mneme (memory) --> crucible (independent verification)
+```
+
+Nobody else's memory can be independently verified this way.
+
 ## Accountable forgetting
 
 Every memory system lets you delete a fact. mneme is the only one where the
