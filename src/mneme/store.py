@@ -35,6 +35,11 @@ CREATE TABLE IF NOT EXISTS memories (
 CREATE INDEX IF NOT EXISTS idx_mem_layer ON memories(layer);
 CREATE INDEX IF NOT EXISTS idx_mem_session ON memories(session);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS audit (
+    ord INTEGER PRIMARY KEY, op TEXT NOT NULL, memory_id TEXT NOT NULL,
+    layer TEXT NOT NULL, before_sha TEXT NOT NULL, after_sha TEXT NOT NULL,
+    reason TEXT NOT NULL, entry_sha TEXT NOT NULL
+);
 """
 
 
@@ -114,6 +119,71 @@ class Store:
             return None
         return ProvenanceReceipt(r["id"], r["layer"], tuple(json.loads(r["source_ids"])),
                                  r["extractor"], r["criterion"], r["content_sha256"])
+
+    # -- accountable editing: forget / update leave a tombstone in an
+    #    append-only, hash-chained audit log so the forgetting is itself auditable
+    def _audit(self, op: str, memory_id: str, layer: str, before: str,
+               after: str, reason: str) -> dict:
+        from .receipt import content_hash
+        prev = self.conn.execute(
+            "SELECT entry_sha FROM audit ORDER BY ord DESC LIMIT 1").fetchone()
+        prev_sha = prev["entry_sha"] if prev else ""
+        core = f"{op}|{memory_id}|{layer}|{before}|{after}|{reason}"
+        entry = content_hash(prev_sha, core)
+        o = self._next_ord()
+        self.conn.execute(
+            "INSERT INTO audit(ord,op,memory_id,layer,before_sha,after_sha,reason,entry_sha) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (o, op, memory_id, layer, before, after, reason, entry))
+        self.conn.commit()
+        return {"op": op, "memory_id": memory_id, "layer": layer,
+                "before_sha": before, "after_sha": after, "reason": reason,
+                "entry_sha": entry}
+
+    def forget(self, memory_id: str, reason: str = "") -> dict | None:
+        """Delete a memory, leaving a tombstone receipt (what was forgotten, its
+        hash, why). Returns the audit entry, or None if the memory is absent."""
+        row = self.memory(memory_id)
+        if row is None:
+            return None
+        entry = self._audit("forget", memory_id, row["layer"],
+                            row["content_sha256"], "", reason)
+        self.conn.execute("DELETE FROM memories WHERE id=?", (memory_id,))
+        self.conn.commit()
+        return entry
+
+    def update(self, memory_id: str, new_text: str, reason: str = "") -> dict | None:
+        """Replace a memory's text, re-deriving its hash and leaving an audit
+        entry (before/after hash, why). Provenance (sources, criterion) is kept."""
+        from .receipt import memory_hash
+        row = self.memory(memory_id)
+        if row is None:
+            return None
+        source_ids = json.loads(row["source_ids"])
+        after = memory_hash(new_text, source_ids, row["criterion"])
+        entry = self._audit("update", memory_id, row["layer"],
+                            row["content_sha256"], after, reason)
+        self.conn.execute(
+            "UPDATE memories SET text=?, content_sha256=? WHERE id=?",
+            (new_text, after, memory_id))
+        self.conn.commit()
+        return entry
+
+    def audit_log(self) -> list:
+        return self.conn.execute("SELECT * FROM audit ORDER BY ord").fetchall()
+
+    def verify_audit(self) -> bool:
+        """Re-derive the audit chain; True iff every entry hash reproduces. A
+        deleted, reordered, or edited tombstone breaks it — you cannot quietly
+        forget that you forgot something."""
+        from .receipt import content_hash
+        prev = ""
+        for e in self.audit_log():
+            core = f"{e['op']}|{e['memory_id']}|{e['layer']}|{e['before_sha']}|{e['after_sha']}|{e['reason']}"
+            prev = content_hash(prev, core)
+            if prev != e["entry_sha"]:
+                return False
+        return True
 
     def close(self) -> None:
         self.conn.close()

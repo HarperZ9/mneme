@@ -65,6 +65,16 @@ def _tool_defs() -> list[dict]:
          "description": "Show a memory's provenance receipt (sources, extractor, hash).",
          "inputSchema": {"type": "object", "required": ["memory_id"],
              "properties": {"memory_id": {"type": "string"}}}},
+        {"name": "mneme.forget",
+         "description": "Delete a memory, leaving an auditable tombstone (what "
+                        "was forgotten, its hash, why).",
+         "inputSchema": {"type": "object", "required": ["memory_id"],
+             "properties": {"memory_id": {"type": "string"},
+                            "reason": {"type": "string"}}}},
+        {"name": "mneme.audit",
+         "description": "The hash-chained history of every forget/update, with a "
+                        "chain-intact verdict.",
+         "inputSchema": {"type": "object", "properties": {}}},
     ]
 
 
@@ -85,6 +95,13 @@ def call_tool(name: str, args: dict) -> str:
         if prov is None:
             raise ValueError(f"no memory with id {args['memory_id']!r}")
         return json.dumps(prov, indent=2, ensure_ascii=False)
+    if name == "mneme.forget":
+        entry = mem.forget(str(args["memory_id"]), reason=str(args.get("reason", "")))
+        if entry is None:
+            raise ValueError(f"no memory with id {args['memory_id']!r}")
+        return json.dumps(entry, indent=2, ensure_ascii=False)
+    if name == "mneme.audit":
+        return json.dumps(mem.audit(), indent=2, ensure_ascii=False)
     raise ValueError(f"unknown tool: {name}")
 
 

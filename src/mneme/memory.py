@@ -70,6 +70,28 @@ class AgentMemory:
         r = self.store.provenance(memory_id)
         return r.as_dict() if r else None
 
+    # -- accountable editing -------------------------------------------------
+    def forget(self, memory_id: str, reason: str = "") -> dict | None:
+        """Delete a memory, leaving a tombstone in the hash-chained audit log:
+        forgetting is auditable, not silent. None if the memory is absent."""
+        return self.store.forget(memory_id, reason)
+
+    def update(self, memory_id: str, new_text: str, reason: str = "") -> dict | None:
+        """Edit a memory's text, keeping its provenance and recording the
+        before/after hash in the audit log. None if the memory is absent."""
+        return self.store.update(memory_id, new_text, reason)
+
+    def audit(self) -> dict:
+        """The append-only, hash-chained history of every forget/update, with a
+        verify verdict. What was known and when it changed is re-checkable."""
+        rows = self.store.audit_log()
+        return {"schema": "mneme.audit/1", "entries": len(rows),
+                "chain_intact": self.store.verify_audit(),
+                "log": [{"op": r["op"], "memory_id": r["memory_id"],
+                         "layer": r["layer"], "before_sha": r["before_sha"],
+                         "after_sha": r["after_sha"], "reason": r["reason"],
+                         "entry_sha": r["entry_sha"]} for r in rows]}
+
     # -- scenarios (L2) ------------------------------------------------------
     def build_scenarios(self, session: str, *, min_shared: int = 1) -> dict:
         """Cluster this session's atoms into L2 scenarios (scene blocks), each

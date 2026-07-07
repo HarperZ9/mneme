@@ -65,7 +65,8 @@ def test_mcp_initialize_and_tools_list():
     init = _rpc("initialize")
     assert init["result"]["serverInfo"]["name"] == "mneme"
     tools = {t["name"] for t in _rpc("tools/list")["result"]["tools"]}
-    assert tools == {"mneme.remember", "mneme.recall", "mneme.drift", "mneme.provenance"}
+    assert tools == {"mneme.remember", "mneme.recall", "mneme.drift",
+                     "mneme.provenance", "mneme.forget", "mneme.audit"}
 
 
 def test_mcp_remember_then_recall_carries_the_receipt(tmp_path, monkeypatch):

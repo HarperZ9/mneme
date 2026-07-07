@@ -98,6 +98,20 @@ def build_parser() -> argparse.ArgumentParser:
     sc.add_argument("--min-shared", type=int, default=1)
     sc.set_defaults(func=cmd_scenarios)
 
+    fg = sub.add_parser("forget", help="delete a memory, leaving an auditable tombstone")
+    fg.add_argument("memory_id")
+    fg.add_argument("--reason", default="")
+    fg.set_defaults(func=cmd_forget)
+
+    up = sub.add_parser("update", help="edit a memory's text, recording before/after in the audit log")
+    up.add_argument("memory_id")
+    up.add_argument("text")
+    up.add_argument("--reason", default="")
+    up.set_defaults(func=cmd_update)
+
+    au = sub.add_parser("audit", help="show the hash-chained history of every forget/update")
+    au.set_defaults(func=cmd_audit)
+
     bench = sub.add_parser("bench", help="token-economics benchmark: reduction AND answer-recall, re-derivable")
     bench.add_argument("--turns", default=None, help="JSON conversation file (default: built-in scenario)")
     bench.add_argument("--probes", default=None, help="JSON probes file [{query,answer_contains}]")
@@ -108,6 +122,29 @@ def build_parser() -> argparse.ArgumentParser:
     mcp = sub.add_parser("mcp", help="serve mneme over MCP stdio (agent memory tools)")
     mcp.set_defaults(func=cmd_mcp)
     return p
+
+
+def cmd_forget(args) -> int:
+    entry = AgentMemory(args.state).forget(args.memory_id, reason=args.reason)
+    if entry is None:
+        print(f"no memory with id {args.memory_id!r}", file=sys.stderr)
+        return 2
+    print(json.dumps(entry, indent=2))
+    return 0
+
+
+def cmd_update(args) -> int:
+    entry = AgentMemory(args.state).update(args.memory_id, args.text, reason=args.reason)
+    if entry is None:
+        print(f"no memory with id {args.memory_id!r}", file=sys.stderr)
+        return 2
+    print(json.dumps(entry, indent=2))
+    return 0
+
+
+def cmd_audit(args) -> int:
+    print(json.dumps(AgentMemory(args.state).audit(), indent=2))
+    return 0
 
 
 def cmd_bench(args) -> int:

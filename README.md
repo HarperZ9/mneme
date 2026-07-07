@@ -73,6 +73,21 @@ An embedder (`AgentMemory(..., embedder=fn)`) turns on the vector channel; an
 LLM `Extractor` plugs in for richer atoms. Neither is required — the
 deterministic floor works with no model and no API.
 
+## Accountable forgetting
+
+Every memory system lets you delete a fact. mneme is the only one where the
+deletion is auditable: `forget` and `update` leave a hash-chained tombstone —
+what was forgotten, its hash, and why — so you cannot quietly forget that you
+forgot something (required for GDPR-style "right to be forgotten" you can prove).
+
+```bash
+mneme forget <memory_id> --reason "user requested deletion"
+mneme audit          # -> {"entries":1,"chain_intact":true,"log":[{"op":"forget", …}]}
+```
+
+`update` edits a memory's text while keeping its provenance and recording the
+before/after hash. Tamper a tombstone and the chain breaks.
+
 ## Agents plug in over MCP
 
 ```bash
