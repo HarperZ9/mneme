@@ -40,6 +40,10 @@ jobs:
 
   publish:
     needs: build
+    # gated: stays skipped until PyPI trusted publishing is set up and the repo
+    # variable PYPI_ENABLED is set to 'true' — so a tag/release builds + smokes
+    # without a failing publish run before the trusted publisher exists.
+    if: ${{ vars.PYPI_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
