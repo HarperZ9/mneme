@@ -21,14 +21,14 @@ def _load_turns(path: str) -> list[dict]:
 
 def cmd_remember(args) -> int:
     mem = AgentMemory(args.state)
-    summary = mem.remember(args.session, _load_turns(args.turns))
+    summary = mem.remember(args.session, _load_turns(args.turns), user=args.user)
     print(json.dumps(summary, indent=2))
     return 0
 
 
 def cmd_recall(args) -> int:
     mem = AgentMemory(args.state, embed=getattr(args, "embed", None))
-    receipt = mem.recall(args.query, strategy=args.strategy, top_k=args.top_k, recency_weight=getattr(args, "recency", 0.0))
+    receipt = mem.recall(args.query, strategy=args.strategy, top_k=args.top_k, recency_weight=getattr(args, "recency", 0.0), user=getattr(args,"user",None), session=getattr(args,"session",None))
     if args.json:
         print(json.dumps(receipt.as_dict(), indent=2))
     else:
@@ -72,6 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
     rem = sub.add_parser("remember", help="record turns (L0) and extract atoms (L1) with provenance")
     rem.add_argument("session")
     rem.add_argument("turns", help="path to a JSON list of {role,text} turns (or - for stdin)")
+    rem.add_argument("--user", default="", help="scope the memory to one user (multi-tenant)")
     rem.set_defaults(func=cmd_remember)
 
     rec = sub.add_parser("recall", help="retrieve memories with a re-derivable ranking receipt")
@@ -80,6 +81,8 @@ def build_parser() -> argparse.ArgumentParser:
     rec.add_argument("--top-k", type=int, default=5)
     rec.add_argument("--embed", choices=["ngram"], default=None, help="turn on the zero-dep local vector channel")
     rec.add_argument("--recency", type=float, default=0.0, help="weight recent memories (0=off; transparent, in the receipt)")
+    rec.add_argument("--user", default=None, help="scope recall to one user")
+    rec.add_argument("--session", default=None, help="scope recall to one session")
     rec.add_argument("--json", action="store_true")
     rec.set_defaults(func=cmd_recall)
 

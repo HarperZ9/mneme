@@ -29,12 +29,13 @@ CREATE TABLE IF NOT EXISTS turns (
     origin TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS memories (
-    id TEXT PRIMARY KEY, layer TEXT NOT NULL, session TEXT,
+    id TEXT PRIMARY KEY, layer TEXT NOT NULL, session TEXT, "user" TEXT NOT NULL DEFAULT '',
     text TEXT NOT NULL, source_ids TEXT NOT NULL, extractor TEXT NOT NULL,
     criterion TEXT NOT NULL, content_sha256 TEXT NOT NULL, created_ord INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_mem_layer ON memories(layer);
 CREATE INDEX IF NOT EXISTS idx_mem_session ON memories(session);
+CREATE INDEX IF NOT EXISTS idx_mem_user ON memories("user");
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS audit (
     ord INTEGER PRIMARY KEY, op TEXT NOT NULL, memory_id TEXT NOT NULL,
@@ -95,31 +96,37 @@ class Store:
     # -- memories (L1-L3) ----------------------------------------------------
     def add_memory(self, memory_id: str, layer: str, text: str,
                    source_ids: Iterable[str], extractor: str, criterion: str,
-                   session: str | None = None) -> ProvenanceReceipt:
+                   session: str | None = None, user: str = "") -> ProvenanceReceipt:
         if layer not in LAYERS:
             raise ValueError(f"layer must be one of {LAYERS}, got {layer!r}")
         sids = list(source_ids)
         sha = memory_hash(text, sids, criterion)
         self.conn.execute(
             "INSERT OR REPLACE INTO memories"
-            "(id,layer,session,text,source_ids,extractor,criterion,content_sha256,created_ord) "
-            "VALUES(?,?,?,?,?,?,?,?,?)",
-            (memory_id, layer, session, text, json.dumps(sids), extractor,
+            '(id,layer,session,"user",text,source_ids,extractor,criterion,content_sha256,created_ord) '
+            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (memory_id, layer, session, user, text, json.dumps(sids), extractor,
              criterion, sha, self._next_ord()))
         self.conn.commit()
         return ProvenanceReceipt(memory_id, layer, tuple(sids), extractor, criterion, sha)
 
-    def memories(self, layer: str | None = None,
-                 session: str | None = None) -> list[sqlite3.Row]:
+    def memories(self, layer: str | None = None, session: str | None = None,
+                 user: str | None = None) -> list[sqlite3.Row]:
         q = "SELECT * FROM memories"
         conds, args = [], []
         if layer:
             conds.append("layer=?"); args.append(layer)
         if session:
             conds.append("session=?"); args.append(session)
+        if user is not None:
+            conds.append('"user"=?'); args.append(user)
         if conds:
             q += " WHERE " + " AND ".join(conds)
         return self.conn.execute(q + " ORDER BY created_ord", args).fetchall()
+
+    def users(self) -> list[str]:
+        rows = self.conn.execute('SELECT DISTINCT "user" FROM memories ORDER BY "user"').fetchall()
+        return [r["user"] for r in rows]
 
     def memory(self, memory_id: str) -> sqlite3.Row | None:
         return self.conn.execute("SELECT * FROM memories WHERE id=?", (memory_id,)).fetchone()

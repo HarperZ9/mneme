@@ -37,11 +37,11 @@ class AgentMemory:
         self.embedder = embedder or resolve_embedder(embed)
 
     # -- ingest --------------------------------------------------------------
-    def remember(self, session: str, turns: Sequence[dict]) -> dict:
+    def remember(self, session: str, turns: Sequence[dict], user: str = "") -> dict:
         """Record raw turns (L0) and extract atoms (L1) with provenance. Each
-        turn is {role, text} (+ optional id). Idempotent: identical turns and
-        atoms collapse by content id, so re-ingesting the same session is a
-        no-op. Returns a summary with the provenance receipts."""
+        turn is {role, text} (+ optional id). `user` scopes the memory to one
+        user (multi-tenant isolation); default "" is a single shared user.
+        Idempotent by content id. Returns a summary with the provenance receipts."""
         turn_rows = []
         for i, t in enumerate(turns):
             tid = t.get("id") or content_hash(session, str(i), t["role"], t["text"])[:16]
@@ -51,19 +51,24 @@ class AgentMemory:
         receipts = []
         for aid, atom in atoms:
             r = self.store.add_memory(aid, "L1", atom.text, [atom.source_id],
-                                      self.extractor.name, _L1_CRITERION, session=session)
+                                      self.extractor.name, _L1_CRITERION,
+                                      session=session, user=user)
             receipts.append(r.as_dict())
-        return {"session": session, "turns": len(turn_rows), "atoms": len(receipts),
-                "extractor": self.extractor.name, "provenance": receipts}
+        return {"session": session, "user": user, "turns": len(turn_rows),
+                "atoms": len(receipts), "extractor": self.extractor.name,
+                "provenance": receipts}
 
     # -- recall --------------------------------------------------------------
     def recall(self, query: str, *, strategy: str = "hybrid", top_k: int = 5,
-               layer: str | None = None, recency_weight: float = 0.0) -> RecallReceipt:
+               layer: str | None = None, recency_weight: float = 0.0,
+               user: str | None = None, session: str | None = None) -> RecallReceipt:
         """Retrieve memories for `query` with a re-derivable ranking receipt.
-        `layer` None searches L1 atoms (the durable facts). recency_weight > 0
-        prefers recent memories (transparently — the component is in the receipt)."""
+        `layer` None searches L1 atoms. `user`/`session` scope retrieval to one
+        tenant or conversation (None = across all, the default). recency_weight
+        > 0 prefers recent memories (transparently — the component is in the
+        receipt). Cross-session recall is just `user=X, session=None`."""
         rows = [{"id": r["id"], "text": r["text"], "layer": r["layer"], "ord": r["created_ord"]}
-                for r in self.store.memories(layer=layer or "L1")]
+                for r in self.store.memories(layer=layer or "L1", session=session, user=user)]
         return recall(query, rows, strategy=strategy, top_k=top_k,
                       embedder=self.embedder, recency_weight=recency_weight)
 
