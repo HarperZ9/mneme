@@ -19,22 +19,21 @@ irreversible); this turns it into a reviewed, pre-flighted, four-command action.
 - [x] **CI written** — `.github/workflows/ci.yml`: pytest on ubuntu/windows/macos
       × py3.11–3.13 + a wheel-install job.
 
-## The four commands (operator-gated)
+## Status
+
+- [x] **GitHub: LIVE** — https://github.com/HarperZ9/mneme (public, pushed 2026-07-07).
+- [ ] **PyPI** — one step away, tokenless via OIDC. Do this once on PyPI, then tag:
 
 ```bash
-# 1. create the public repo (decides visibility)
-gh repo create HarperZ9/mneme --public --source . --remote origin --description \
-  "Accountable agent memory: layered memory + hybrid retrieval where every memory carries provenance, every recall is re-derivable, every stale memory flags its own drift."
-
-# 2. push (CI runs on arrival)
-git push -u origin main
-
-# 3. build the distribution
-python -m build          # -> dist/mneme_memory-0.1.0-{whl,tar.gz}
-
-# 4. publish to PyPI (needs a PyPI token; prefer OIDC trusted publishing via CI)
-python -m twine upload dist/*
+# one-time on PyPI: add a trusted publisher
+#   project: mneme-memory · owner: HarperZ9 · repo: mneme · workflow: release.yml
+# then a tag publishes automatically (no token, ever):
+git tag v0.1.0 && git push origin v0.1.0
 ```
+
+The `release.yml` workflow builds, verifies the tag matches the version,
+installs the wheel and smokes the CLI, then publishes via OIDC. No token passes
+through any tool but PyPI's own trusted-publisher handshake.
 
 ## Positioning (for the release notes)
 
