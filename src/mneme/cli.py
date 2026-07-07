@@ -98,9 +98,25 @@ def build_parser() -> argparse.ArgumentParser:
     sc.add_argument("--min-shared", type=int, default=1)
     sc.set_defaults(func=cmd_scenarios)
 
+    bench = sub.add_parser("bench", help="token-economics benchmark: reduction AND answer-recall, re-derivable")
+    bench.add_argument("--turns", default=None, help="JSON conversation file (default: built-in scenario)")
+    bench.add_argument("--probes", default=None, help="JSON probes file [{query,answer_contains}]")
+    bench.add_argument("--top-k", type=int, default=3)
+    bench.add_argument("--strategy", choices=["keyword", "vector", "hybrid"], default="keyword")
+    bench.set_defaults(func=cmd_bench)
+
     mcp = sub.add_parser("mcp", help="serve mneme over MCP stdio (agent memory tools)")
     mcp.set_defaults(func=cmd_mcp)
     return p
+
+
+def cmd_bench(args) -> int:
+    from .bench import run_bench
+    turns = json.load(open(args.turns, encoding="utf-8")) if args.turns else None
+    probes = json.load(open(args.probes, encoding="utf-8")) if args.probes else None
+    report = run_bench(turns, probes, top_k=args.top_k, strategy=args.strategy)
+    print(json.dumps(report, indent=2))
+    return 0
 
 
 def cmd_scenarios(args) -> int:

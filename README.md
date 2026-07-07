@@ -84,6 +84,24 @@ recall through MCP returns the same re-derivable receipt, so the agent (or its
 operator) can see and re-check why a memory was surfaced — the accountability
 travels with the tool result.
 
+## Benchmark you can re-run
+
+The category is sold on one number: "N% fewer tokens." Everyone publishes the
+reduction; nobody proves the answer *survived* it. mneme measures both.
+
+```bash
+mneme bench
+# token_reduction: 76.6%   (full history 125 tok -> avg recalled 29 tok)
+# answer_recall:   100%    (5 probes — every needed fact survived the reduction)
+```
+
+A reduction is only reported **alongside** its answer recall, so a number that
+looks great by forgetting the answer is disqualified, not a win. The receipt
+carries the per-probe detail and the exact token estimator, so a third party
+re-runs the measurement over the same conversation and reproduces the number —
+a benchmark you can escrow, not a marketing figure. Point it at your own
+conversation with `--turns convo.json --probes probes.json`.
+
 ## Scenarios (L2)
 
 ```bash
