@@ -73,6 +73,27 @@ An embedder (`AgentMemory(..., embedder=fn)`) turns on the vector channel; an
 LLM `Extractor` plugs in for richer atoms. Neither is required — the
 deterministic floor works with no model and no API.
 
+## The ecosystem: memory that traces to its source
+
+Point mneme at an accountable intake tool ([gather](https://github.com/HarperZ9/gather),
+the sibling flagship) and the provenance chains end to end — something no
+single-purpose memory library can do:
+
+```
+web url --(gather sha256)--> mneme turn --> mneme atom --> recall
+```
+
+```bash
+mneme ingest research items.json     # gather-shaped {id,text,source,ref,method,sha256}
+mneme recall "where is the user based"
+mneme chain <memory_id>              # -> the web url + content hash it came from
+```
+
+An agent that remembers what it researched, and can prove a recalled memory
+traces to the exact bytes fetched from the exact source (`re-fetch the ref,
+re-hash, confirm it equals the origin sha256`). Any intake tool that emits that
+shape composes — mneme never imports gather.
+
 ## Accountable forgetting
 
 Every memory system lets you delete a fact. mneme is the only one where the

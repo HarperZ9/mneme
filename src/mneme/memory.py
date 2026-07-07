@@ -70,6 +70,19 @@ class AgentMemory:
         r = self.store.provenance(memory_id)
         return r.as_dict() if r else None
 
+    # -- ecosystem composition ----------------------------------------------
+    def ingest_gather(self, session: str, items: list[dict]) -> dict:
+        """Ingest accountable-intake items (gather's shape) into memory, binding
+        each item's origin receipt so the memory traces to its web source."""
+        from .ingest import from_gather
+        return from_gather(self, items, session)
+
+    def provenance_chain(self, memory_id: str) -> dict | None:
+        """The full re-checkable chain for a memory: atom -> source turn ->
+        external origin receipt (web source + content hash)."""
+        from .ingest import provenance_chain
+        return provenance_chain(self, memory_id)
+
     # -- accountable editing -------------------------------------------------
     def forget(self, memory_id: str, reason: str = "") -> dict | None:
         """Delete a memory, leaving a tombstone in the hash-chained audit log:

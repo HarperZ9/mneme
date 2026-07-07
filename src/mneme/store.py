@@ -25,7 +25,8 @@ LAYERS = ("L0", "L1", "L2", "L3")
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS turns (
     id TEXT PRIMARY KEY, session TEXT NOT NULL, role TEXT NOT NULL,
-    text TEXT NOT NULL, ord INTEGER NOT NULL, content_sha256 TEXT NOT NULL
+    text TEXT NOT NULL, ord INTEGER NOT NULL, content_sha256 TEXT NOT NULL,
+    origin TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS memories (
     id TEXT PRIMARY KEY, layer TEXT NOT NULL, session TEXT,
@@ -62,15 +63,25 @@ class Store:
         return n
 
     # -- L0 turns ------------------------------------------------------------
-    def add_turn(self, turn_id: str, session: str, role: str, text: str) -> str:
+    def add_turn(self, turn_id: str, session: str, role: str, text: str,
+                 origin: dict | None = None) -> str:
         from .receipt import content_hash
         sha = content_hash(role, text)
         self.conn.execute(
-            "INSERT OR REPLACE INTO turns(id,session,role,text,ord,content_sha256) "
-            "VALUES(?,?,?,?,?,?)",
-            (turn_id, session, role, text, self._next_ord(), sha))
+            "INSERT OR REPLACE INTO turns(id,session,role,text,ord,content_sha256,origin) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (turn_id, session, role, text, self._next_ord(), sha,
+             json.dumps(origin) if origin else ""))
         self.conn.commit()
         return turn_id
+
+    def turn_origin(self, turn_id: str) -> dict | None:
+        """The external origin receipt bound to a turn (e.g. a gather source
+        receipt), or None if the turn was not ingested from an external source."""
+        row = self.turn(turn_id)
+        if row is None or not row["origin"]:
+            return None
+        return json.loads(row["origin"])
 
     def turns(self, session: str | None = None) -> list[sqlite3.Row]:
         if session is None:

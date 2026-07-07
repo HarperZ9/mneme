@@ -116,6 +116,15 @@ def build_parser() -> argparse.ArgumentParser:
     insp.add_argument("--out", default=None, help="write the HTML here (default: stdout)")
     insp.set_defaults(func=cmd_inspect)
 
+    ing = sub.add_parser("ingest", help="ingest gather-shaped intake items (JSON) with source provenance")
+    ing.add_argument("session")
+    ing.add_argument("items", help="JSON list of {id,text,source,ref,method,sha256} (or - for stdin)")
+    ing.set_defaults(func=cmd_ingest)
+
+    ch = sub.add_parser("chain", help="walk a memory's full provenance chain back to its web source")
+    ch.add_argument("memory_id")
+    ch.set_defaults(func=cmd_chain)
+
     bench = sub.add_parser("bench", help="token-economics benchmark: reduction AND answer-recall, re-derivable")
     bench.add_argument("--turns", default=None, help="JSON conversation file (default: built-in scenario)")
     bench.add_argument("--probes", default=None, help="JSON probes file [{query,answer_contains}]")
@@ -148,6 +157,22 @@ def cmd_update(args) -> int:
 
 def cmd_audit(args) -> int:
     print(json.dumps(AgentMemory(args.state).audit(), indent=2))
+    return 0
+
+
+def cmd_ingest(args) -> int:
+    text = sys.stdin.read() if args.items == "-" else open(args.items, encoding="utf-8").read()
+    items = json.loads(text)
+    print(json.dumps(AgentMemory(args.state).ingest_gather(args.session, items), indent=2))
+    return 0
+
+
+def cmd_chain(args) -> int:
+    chain = AgentMemory(args.state).provenance_chain(args.memory_id)
+    if chain is None:
+        print(f"no memory with id {args.memory_id!r}", file=sys.stderr)
+        return 2
+    print(json.dumps(chain, indent=2))
     return 0
 
 
