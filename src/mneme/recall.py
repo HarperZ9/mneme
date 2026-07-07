@@ -79,12 +79,17 @@ def _rrf(rank: int, k: int = 60) -> float:
 
 
 def recall(query: str, rows: list, *, strategy: str = "hybrid", top_k: int = 5,
-           embedder: Embedder | None = None, rrf_k: int = 60) -> RecallReceipt:
-    """Rank `rows` (each a mapping with id/text/layer) against `query`.
+           embedder: Embedder | None = None, rrf_k: int = 60,
+           recency_weight: float = 0.0) -> RecallReceipt:
+    """Rank `rows` (each a mapping with id/text/layer, optional 'ord') against `query`.
 
     strategy: 'keyword' (BM25 only), 'vector' (embedder only), 'hybrid' (RRF of
     both — falls back to keyword when no embedder is given, stated in the receipt).
-    Returns a RecallReceipt whose ranking a third party reproduces."""
+    recency_weight > 0 adds a scale-free recency channel (RRF over `ord`, newest
+    first) scaled by the weight, so recent memories are preferred WITHOUT hiding
+    it: the recency component rides each hit and the rule is in the receipt, so
+    the ranking stays fully re-derivable. Returns a RecallReceipt a third party
+    reproduces."""
     ids = [r["id"] for r in rows]
     texts = [r["text"] for r in rows]
     layers = [r["layer"] for r in rows]
@@ -112,11 +117,25 @@ def recall(query: str, rows: list, *, strategy: str = "hybrid", top_k: int = 5,
         fused = [_rrf(bm_rank[i], rrf_k) + _rrf(vec_rank[i], rrf_k) for i in range(len(rows))]
         fusion = f"rrf(k={rrf_k}) over bm25+cosine"
 
+    recency = [0.0] * len(rows)
+    if recency_weight > 0 and rows:
+        # scale-free recency channel: RRF over `ord` desc (newest = rank 1).
+        # relevance ranks are RRF'd too so the two blend on one scale.
+        ords = [row.get("ord", 0) for row in rows]
+        rec_rank = _ranks(ords, ids)
+        rel_rank = _ranks(fused, ids)
+        base = [_rrf(rel_rank[i], rrf_k) for i in range(len(rows))]
+        recency = [recency_weight * _rrf(rec_rank[i], rrf_k) for i in range(len(rows))]
+        fused = [base[i] + recency[i] for i in range(len(rows))]
+        fusion = f"{fusion} + {recency_weight}*rrf(recency by ord)"
+
     order = sorted(range(len(rows)), key=lambda i: (-fused[i], ids[i]))
+    keep = lambda i: fused[i] > 0 or strategy == "vector" or recency_weight > 0
     hits = tuple(
         Hit(memory_id=ids[i], text=texts[i], layer=layers[i],
-            bm25=bm_scores[i], vector=vec_scores[i], fused=fused[i])
-        for i in order[:top_k] if fused[i] > 0 or strategy == "vector")
+            bm25=bm_scores[i], vector=vec_scores[i], fused=fused[i],
+            recency=recency[i])
+        for i in order[:top_k] if keep(i))
     return RecallReceipt(schema=SCHEMA, query=query, strategy=strategy,
                          fusion=fusion, hits=hits, corpus_size=len(rows))
 

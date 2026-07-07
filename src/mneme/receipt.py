@@ -64,11 +64,12 @@ class Hit:
     bm25: float
     vector: float
     fused: float
+    recency: float = 0.0        # recency component (0 when recency weighting is off)
 
     def as_dict(self) -> dict:
         return {"memory_id": self.memory_id, "text": self.text, "layer": self.layer,
                 "bm25": round(self.bm25, 6), "vector": round(self.vector, 6),
-                "fused": round(self.fused, 6)}
+                "recency": round(self.recency, 6), "fused": round(self.fused, 6)}
 
 
 @dataclass(frozen=True, slots=True)

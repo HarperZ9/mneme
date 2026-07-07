@@ -58,12 +58,14 @@ class AgentMemory:
 
     # -- recall --------------------------------------------------------------
     def recall(self, query: str, *, strategy: str = "hybrid", top_k: int = 5,
-               layer: str | None = None) -> RecallReceipt:
+               layer: str | None = None, recency_weight: float = 0.0) -> RecallReceipt:
         """Retrieve memories for `query` with a re-derivable ranking receipt.
-        `layer` None searches L1 atoms (the durable facts)."""
-        rows = [{"id": r["id"], "text": r["text"], "layer": r["layer"]}
+        `layer` None searches L1 atoms (the durable facts). recency_weight > 0
+        prefers recent memories (transparently — the component is in the receipt)."""
+        rows = [{"id": r["id"], "text": r["text"], "layer": r["layer"], "ord": r["created_ord"]}
                 for r in self.store.memories(layer=layer or "L1")]
-        return recall(query, rows, strategy=strategy, top_k=top_k, embedder=self.embedder)
+        return recall(query, rows, strategy=strategy, top_k=top_k,
+                      embedder=self.embedder, recency_weight=recency_weight)
 
     # -- accountability ------------------------------------------------------
     def drift(self, layer: str | None = "L1") -> dict:

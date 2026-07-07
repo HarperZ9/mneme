@@ -28,7 +28,7 @@ def cmd_remember(args) -> int:
 
 def cmd_recall(args) -> int:
     mem = AgentMemory(args.state, embed=getattr(args, "embed", None))
-    receipt = mem.recall(args.query, strategy=args.strategy, top_k=args.top_k)
+    receipt = mem.recall(args.query, strategy=args.strategy, top_k=args.top_k, recency_weight=getattr(args, "recency", 0.0))
     if args.json:
         print(json.dumps(receipt.as_dict(), indent=2))
     else:
@@ -79,6 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
     rec.add_argument("--strategy", choices=["keyword", "vector", "hybrid"], default="hybrid")
     rec.add_argument("--top-k", type=int, default=5)
     rec.add_argument("--embed", choices=["ngram"], default=None, help="turn on the zero-dep local vector channel")
+    rec.add_argument("--recency", type=float, default=0.0, help="weight recent memories (0=off; transparent, in the receipt)")
     rec.add_argument("--json", action="store_true")
     rec.set_defaults(func=cmd_recall)
 
