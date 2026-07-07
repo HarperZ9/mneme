@@ -112,6 +112,10 @@ def build_parser() -> argparse.ArgumentParser:
     au = sub.add_parser("audit", help="show the hash-chained history of every forget/update")
     au.set_defaults(func=cmd_audit)
 
+    insp = sub.add_parser("inspect", help="render a self-contained white-box HTML view of the memory")
+    insp.add_argument("--out", default=None, help="write the HTML here (default: stdout)")
+    insp.set_defaults(func=cmd_inspect)
+
     bench = sub.add_parser("bench", help="token-economics benchmark: reduction AND answer-recall, re-derivable")
     bench.add_argument("--turns", default=None, help="JSON conversation file (default: built-in scenario)")
     bench.add_argument("--probes", default=None, help="JSON probes file [{query,answer_contains}]")
@@ -144,6 +148,18 @@ def cmd_update(args) -> int:
 
 def cmd_audit(args) -> int:
     print(json.dumps(AgentMemory(args.state).audit(), indent=2))
+    return 0
+
+
+def cmd_inspect(args) -> int:
+    from .inspect import build_inspect, render_inspect_html
+    page = render_inspect_html(build_inspect(AgentMemory(args.state)))
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as f:
+            f.write(page)
+        print(f"memory inspector -> {args.out}", file=sys.stderr)
+    else:
+        print(page)
     return 0
 
 
