@@ -20,6 +20,10 @@ a re-derivable benchmark, and accountable forgetting.
   cross-session recall (`user=X, session=None`); one user never recalls another's.
 - **Entity graph** — grounded typed relations (lives_in, works_in, allergic_to,
   …) + named entities, every edge citing its source atom (drift-checkable).
+- **Temporal memory** — `supersede` keeps a changed fact's old value with a
+  validity window, so `history` shows the timeline (Denver → Portland → Seattle)
+  and `recall(as_of=N)` reconstructs the past; every transition is in the audit
+  log. `forget` (GDPR erasure) still removes; `supersede` (a fact changed) keeps.
 - **Provenance receipt** on every memory (sources, extractor, criterion, hash).
 - **Re-derivable recall receipt** — ranked hits with bm25/vector/fused scores
   and the fusion rule; re-run the scorer, reproduce the ranking.

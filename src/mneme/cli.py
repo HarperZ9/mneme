@@ -130,6 +130,18 @@ def build_parser() -> argparse.ArgumentParser:
     ch.add_argument("memory_id")
     ch.set_defaults(func=cmd_chain)
 
+    sup = sub.add_parser("supersede", help="record that a fact CHANGED (keeps the old for history)")
+    sup.add_argument("memory_id")
+    sup.add_argument("text")
+    sup.add_argument("--reason", default="")
+    sup.set_defaults(func=cmd_supersede)
+
+    hist = sub.add_parser("history", help="the timeline of a fact (current + superseded)")
+    hist.add_argument("--contains", default=None)
+    hist.add_argument("--predicate", default=None)
+    hist.add_argument("--user", default=None)
+    hist.set_defaults(func=cmd_history)
+
     eg = sub.add_parser("entity-graph", help="build a grounded entity graph (typed relations + named entities)")
     eg.add_argument("--user", default=None)
     eg.add_argument("--session", default=None)
@@ -194,6 +206,17 @@ def cmd_chain(args) -> int:
         return 2
     print(json.dumps(chain, indent=2))
     return 0
+
+
+def cmd_supersede(args) -> int:
+    r = AgentMemory(args.state).supersede(args.memory_id, args.text, reason=args.reason)
+    if r is None:
+        print("no such memory, or already superseded", file=sys.stderr); return 2
+    print(json.dumps(r, indent=2)); return 0
+
+
+def cmd_history(args) -> int:
+    print(json.dumps(AgentMemory(args.state).history(contains=args.contains, predicate=args.predicate, user=args.user), indent=2)); return 0
 
 
 def cmd_entity_graph(args) -> int:

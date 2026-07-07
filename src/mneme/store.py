@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS turns (
 CREATE TABLE IF NOT EXISTS memories (
     id TEXT PRIMARY KEY, layer TEXT NOT NULL, session TEXT, "user" TEXT NOT NULL DEFAULT '',
     text TEXT NOT NULL, source_ids TEXT NOT NULL, extractor TEXT NOT NULL,
-    criterion TEXT NOT NULL, content_sha256 TEXT NOT NULL, created_ord INTEGER NOT NULL
+    criterion TEXT NOT NULL, content_sha256 TEXT NOT NULL, created_ord INTEGER NOT NULL,
+    valid_until INTEGER, superseded_by TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_mem_layer ON memories(layer);
 CREATE INDEX IF NOT EXISTS idx_mem_session ON memories(session);
@@ -111,7 +112,11 @@ class Store:
         return ProvenanceReceipt(memory_id, layer, tuple(sids), extractor, criterion, sha)
 
     def memories(self, layer: str | None = None, session: str | None = None,
-                 user: str | None = None) -> list[sqlite3.Row]:
+                 user: str | None = None, *, as_of: int | None = None,
+                 include_superseded: bool = False) -> list[sqlite3.Row]:
+        """Current memories by default (valid_until IS NULL). `as_of=N` returns
+        the memories that were valid at ordinal N (temporal snapshot);
+        `include_superseded` returns the full history including replaced ones."""
         q = "SELECT * FROM memories"
         conds, args = [], []
         if layer:
@@ -120,9 +125,31 @@ class Store:
             conds.append("session=?"); args.append(session)
         if user is not None:
             conds.append('"user"=?'); args.append(user)
+        if as_of is not None:
+            conds.append("created_ord<=?"); args.append(as_of)
+            conds.append("(valid_until IS NULL OR valid_until>?)"); args.append(as_of)
+        elif not include_superseded:
+            conds.append("valid_until IS NULL")     # current memories only
         if conds:
             q += " WHERE " + " AND ".join(conds)
         return self.conn.execute(q + " ORDER BY created_ord", args).fetchall()
+
+    def supersede(self, old_id: str, new_id: str, reason: str = "") -> dict | None:
+        """Close a memory's validity (a fact CHANGED, not erased): mark it
+        superseded by `new_id` as of now, KEEPING it for temporal history. Unlike
+        forget (which erases the text for GDPR), supersede preserves the timeline.
+        Returns the audit entry, or None if `old_id` is absent/already closed."""
+        row = self.memory(old_id)
+        if row is None or row["valid_until"] is not None:
+            return None
+        at = self._next_ord()
+        self.conn.execute(
+            "UPDATE memories SET valid_until=?, superseded_by=? WHERE id=?",
+            (at, new_id, old_id))
+        entry = self._audit("supersede", old_id, row["layer"],
+                            row["content_sha256"], "", reason or f"superseded by {new_id}")
+        self.conn.commit()
+        return entry
 
     def users(self) -> list[str]:
         rows = self.conn.execute('SELECT DISTINCT "user" FROM memories ORDER BY "user"').fetchall()

@@ -61,16 +61,42 @@ class AgentMemory:
     # -- recall --------------------------------------------------------------
     def recall(self, query: str, *, strategy: str = "hybrid", top_k: int = 5,
                layer: str | None = None, recency_weight: float = 0.0,
-               user: str | None = None, session: str | None = None) -> RecallReceipt:
+               user: str | None = None, session: str | None = None,
+               as_of: int | None = None) -> RecallReceipt:
         """Retrieve memories for `query` with a re-derivable ranking receipt.
         `layer` None searches L1 atoms. `user`/`session` scope retrieval to one
         tenant or conversation (None = across all, the default). recency_weight
         > 0 prefers recent memories (transparently — the component is in the
-        receipt). Cross-session recall is just `user=X, session=None`."""
+        receipt). `as_of=N` recalls against the memory state at ordinal N
+        (point-in-time recall). Cross-session recall is `user=X, session=None`."""
         rows = [{"id": r["id"], "text": r["text"], "layer": r["layer"], "ord": r["created_ord"]}
-                for r in self.store.memories(layer=layer or "L1", session=session, user=user)]
+                for r in self.store.memories(layer=layer or "L1", session=session,
+                                             user=user, as_of=as_of)]
         return recall(query, rows, strategy=strategy, top_k=top_k,
                       embedder=self.embedder, recency_weight=recency_weight)
+
+    # -- temporal ------------------------------------------------------------
+    def supersede(self, old_id: str, new_text: str, *, reason: str = "") -> dict | None:
+        """A fact CHANGED: create a new memory carrying `new_text` (grounded on
+        the old one) and close the old memory's validity, KEEPING it for history.
+        Unlike forget (GDPR erasure), the timeline is preserved. None if `old_id`
+        is absent or already superseded."""
+        old = self.store.memory(old_id)
+        if old is None or old["valid_until"] is not None:
+            return None
+        new_id = content_hash(old_id, new_text)[:16]
+        self.store.add_memory(new_id, "L1", new_text, [old_id], "supersede/v1",
+                              f"supersedes {old_id}", session=old["session"],
+                              user=old["user"])
+        entry = self.store.supersede(old_id, new_id, reason)
+        return {"new_id": new_id, "closed": old_id, "audit": entry}
+
+    def history(self, *, contains: str | None = None, predicate: str | None = None,
+                user: str | None = None) -> dict:
+        """The timeline of a fact (current + superseded), backed by the audit log.
+        Filter by `predicate` (e.g. 'lives_in') or `contains` (substring)."""
+        from .temporal import history
+        return history(self, contains=contains, predicate=predicate, user=user)
 
     # -- accountability ------------------------------------------------------
     def drift(self, layer: str | None = "L1") -> dict:
