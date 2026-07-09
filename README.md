@@ -132,8 +132,22 @@ before/after hash. Tamper a tombstone and the chain breaks.
 mneme mcp          # JSON-RPC 2.0 over stdio; MNEME_STATE points at the DB
 ```
 
-Tools: `mneme.remember`, `mneme.recall`, `mneme.drift`, `mneme.provenance`. A
-recall through MCP returns the same re-derivable receipt, so the agent (or its
+Six tools:
+
+- `mneme.remember` records conversation turns (L0) and extracts atomic facts
+  (L1) with provenance. Idempotent.
+- `mneme.recall` retrieves memories for a query and returns the re-derivable
+  ranking receipt (hits with bm25/vector/fused scores).
+- `mneme.drift` verdicts every memory's grounding against the current store
+  (MATCH / DRIFT / UNVERIFIABLE).
+- `mneme.provenance` shows a memory's provenance receipt (sources, extractor,
+  hash).
+- `mneme.forget` deletes a memory, leaving an auditable tombstone (what was
+  forgotten, its hash, why).
+- `mneme.audit` returns the hash-chained history of every forget/update, with
+  a chain-intact verdict.
+
+A recall through MCP returns the same re-derivable receipt, so the agent (or its
 operator) can see and re-check why a memory was surfaced — the accountability
 travels with the tool result.
 

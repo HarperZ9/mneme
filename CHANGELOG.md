@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.0 (released 2026-07-07, tag v0.1.0)
 
 First release. Accountable agent memory: the layered memory and hybrid retrieval
 the category expects, plus provenance, re-derivable recall, self-flagging drift,
@@ -39,5 +39,5 @@ a re-derivable benchmark, and accountable forgetting.
 - **White-box inspector** — a self-contained HTML view of every layer with
   provenance, drift, and the audit log (`mneme inspect`).
 - **MCP server** — 6 tools over stdio; **runnable tour** (`examples/tour.py`).
-- Zero runtime dependencies (stdlib sqlite3); deterministic; 62 tests; CI on
+- Zero runtime dependencies (stdlib sqlite3); deterministic; 82 tests; CI on
   3 OS × 3 Python + a wheel-install job.

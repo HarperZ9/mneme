@@ -5,7 +5,7 @@ irreversible); this turns it into a reviewed, pre-flighted, four-command action.
 
 ## Preflight (verified 2026-07-07)
 
-- [x] **Tests green** — 42 falsifiers pass (`python -m pytest -q`).
+- [x] **Tests green** — 82 falsifiers pass (`python -m pytest -q`, re-verified 2026-07-09).
 - [x] **Zero runtime dependencies** — stdlib only; `pytest` is the sole dev dep.
 - [x] **No secrets** — credential scan of `src/`+`tests/` clean; no `.env`, `.db`,
       `.key`, or `.token` tracked (`.gitignore` covers them).
