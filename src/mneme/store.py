@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS memories (
     id TEXT PRIMARY KEY, layer TEXT NOT NULL, session TEXT, "user" TEXT NOT NULL DEFAULT '',
     text TEXT NOT NULL, source_ids TEXT NOT NULL, extractor TEXT NOT NULL,
     criterion TEXT NOT NULL, content_sha256 TEXT NOT NULL, created_ord INTEGER NOT NULL,
-    valid_until INTEGER, superseded_by TEXT
+    valid_until INTEGER, superseded_by TEXT,
+    source_hashes TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_mem_layer ON memories(layer);
 CREATE INDEX IF NOT EXISTS idx_mem_session ON memories(session);
@@ -51,11 +52,43 @@ class Store:
     counter (persisted in meta) orders rows without a wall clock, so a rebuild
     from the same inputs is byte-identical."""
 
+    SCHEMA_VERSION = "4"
+    # columns added after the first published schema; an older DB is migrated
+    # forward in place (ADD COLUMN is loss-free) instead of crashing on a raw
+    # "no such column" error when a query reaches a newer field.
+    _MIGRATIONS = (
+        ("memories", "valid_until", "INTEGER"),
+        ("memories", "superseded_by", "TEXT"),
+        ("memories", '"user"', "TEXT NOT NULL DEFAULT ''"),
+        ("memories", "source_hashes", "TEXT NOT NULL DEFAULT '{}'"),
+        ("turns", "origin", "TEXT NOT NULL DEFAULT ''"),
+    )
+
     def __init__(self, path: str | Path = ":memory:"):
         self.conn = sqlite3.connect(str(path))
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(_SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Bring an existing DB up to the current schema in place: add any
+        column a newer version introduced, then stamp the schema version. A
+        format change never surfaces as a raw sqlite traceback."""
+        for table, column, decl in self._MIGRATIONS:
+            cols = {r["name"] for r in
+                    self.conn.execute(f"PRAGMA table_info({table})").fetchall()}
+            if column.strip('"') not in cols:
+                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+        self._meta_set("schema_version", self.SCHEMA_VERSION)
+
+    # -- meta (small key/value; ordinal + audit anchor + schema version) ------
+    def _meta_get(self, key: str) -> str | None:
+        row = self.conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def _meta_set(self, key: str, value: str) -> None:
+        self.conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", (key, value))
 
     # -- ordinal (clock-free ordering) ---------------------------------------
     def _next_ord(self) -> int:
@@ -102,12 +135,35 @@ class Store:
             raise ValueError(f"layer must be one of {LAYERS}, got {layer!r}")
         sids = list(source_ids)
         sha = memory_hash(text, sids, criterion)
+        # id-collision guard: add_memory is idempotent for identical content in
+        # the same partition, but it must never silently overwrite a row that
+        # belongs to another user or carries different content (that is what the
+        # audited update() path is for). Fail closed with a named error rather
+        # than laundering a cross-tenant or unaudited rewrite through REPLACE.
+        prior = self.memory(memory_id)
+        if prior is not None:
+            if prior["user"] != user:
+                raise ValueError(
+                    f"memory id {memory_id!r} already owned by user "
+                    f"{prior['user']!r}; refusing cross-tenant overwrite")
+            if prior["content_sha256"] != sha:
+                raise ValueError(
+                    f"memory id {memory_id!r} exists with different content; "
+                    f"route a content change through update()")
+        # snapshot each source's content hash AS IT IS NOW, so a later change to
+        # a source (turn or cited memory) is detectable by re-comparison — the
+        # content address binds source CONTENT, not just source ids.
+        src_hashes = {}
+        for sid in sids:
+            src = self.turn(sid) or self.memory(sid)
+            if src is not None:
+                src_hashes[sid] = src["content_sha256"]
         self.conn.execute(
             "INSERT OR REPLACE INTO memories"
-            '(id,layer,session,"user",text,source_ids,extractor,criterion,content_sha256,created_ord) '
-            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+            '(id,layer,session,"user",text,source_ids,extractor,criterion,content_sha256,created_ord,source_hashes) '
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (memory_id, layer, session, user, text, json.dumps(sids), extractor,
-             criterion, sha, self._next_ord()))
+             criterion, sha, self._next_ord(), json.dumps(src_hashes, sort_keys=True)))
         self.conn.commit()
         return ProvenanceReceipt(memory_id, layer, tuple(sids), extractor, criterion, sha)
 
