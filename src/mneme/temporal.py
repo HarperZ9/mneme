@@ -44,19 +44,31 @@ def history(memory, *, contains: str | None = None, predicate: str | None = None
         if r["layer"] != "L1" or not _matches(r, contains, predicate):
             continue
         timeline.append({
-            "memory_id": r["id"], "text": r["text"],
+            "memory_id": r["id"], "text": r["text"], "user": r["user"],
             "from_ord": r["created_ord"], "until_ord": r["valid_until"],
             "current": r["valid_until"] is None,
             "superseded_by": r["superseded_by"],
         })
     timeline.sort(key=lambda t: t["from_ord"])
+    # a single-subject answer must not span tenants: if the read was unscoped
+    # (user=None) and the timeline mixes >1 user, refuse the scalar current /
+    # transitions (honest null) rather than presenting one tenant's fact as THE
+    # current value. The timeline itself is attributed per entry.
+    spans_tenants = user is None and len({t["user"] for t in timeline}) > 1
+    note = ("every transition is also in the hash-chained audit log — the "
+            "history is re-checkable. A FORGOTTEN (GDPR-erased) fact never "
+            "appears here; only superseded facts keep their timeline.")
+    if spans_tenants:
+        note = ("timeline spans multiple users (user=None) — 'current' and "
+                "'transitions' are withheld (null) because a single-subject answer "
+                "cannot span tenants; scope with user= for a scalar. " + note)
     return {
         "schema": "mneme.history/1",
         "filter": {"contains": contains, "predicate": predicate, "user": user},
+        "spans_tenants": spans_tenants,
         "timeline": timeline,
-        "transitions": len([t for t in timeline if not t["current"]]),
-        "current": next((t["text"] for t in reversed(timeline) if t["current"]), None),
-        "note": ("every transition is also in the hash-chained audit log — the "
-                 "history is re-checkable. A FORGOTTEN (GDPR-erased) fact never "
-                 "appears here; only superseded facts keep their timeline."),
+        "transitions": None if spans_tenants else len([t for t in timeline if not t["current"]]),
+        "current": None if spans_tenants
+                   else next((t["text"] for t in reversed(timeline) if t["current"]), None),
+        "note": note,
     }
