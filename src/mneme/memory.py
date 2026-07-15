@@ -69,11 +69,13 @@ class AgentMemory:
         > 0 prefers recent memories (transparently — the component is in the
         receipt). `as_of=N` recalls against the memory state at ordinal N
         (point-in-time recall). Cross-session recall is `user=X, session=None`."""
-        rows = [{"id": r["id"], "text": r["text"], "layer": r["layer"], "ord": r["created_ord"]}
+        rows = [{"id": r["id"], "text": r["text"], "layer": r["layer"],
+                 "ord": r["created_ord"], "content_sha256": r["content_sha256"]}
                 for r in self.store.memories(layer=layer or "L1", session=session,
                                              user=user, as_of=as_of)]
         return recall(query, rows, strategy=strategy, top_k=top_k,
-                      embedder=self.embedder, recency_weight=recency_weight)
+                      embedder=self.embedder, recency_weight=recency_weight,
+                      layer=layer or "L1", user=user, session=session, as_of=as_of)
 
     # -- temporal ------------------------------------------------------------
     def supersede(self, old_id: str, new_text: str, *, reason: str = "") -> dict | None:
@@ -127,11 +129,13 @@ class AgentMemory:
         return to_crucible_thesis(self, session, layer)
 
     def consolidate(self, session: str | None = None, *, dup_threshold: float = 0.6,
-                    apply: bool = True) -> dict:
+                    apply: bool = True, user: str | None = None) -> dict:
         """Merge near-duplicate memories (audit-tombstoned) and surface
-        contradiction candidates without auto-resolving them."""
+        contradiction candidates without auto-resolving them. Never merges or
+        contradicts across users, even when `user` is None (all tenants)."""
         from .consolidate import consolidate
-        return consolidate(self, session, dup_threshold=dup_threshold, apply=apply)
+        return consolidate(self, session, dup_threshold=dup_threshold, apply=apply,
+                           user=user)
 
     def entity_graph(self, *, user: str | None = None, session: str | None = None) -> dict:
         """Build a grounded entity graph (typed relations + named entities) over
@@ -162,36 +166,42 @@ class AgentMemory:
                          "entry_sha": r["entry_sha"]} for r in rows]}
 
     # -- scenarios (L2) ------------------------------------------------------
-    def build_scenarios(self, session: str, *, min_shared: int = 1) -> dict:
+    def build_scenarios(self, session: str, *, min_shared: int = 1,
+                        user: str = "") -> dict:
         """Cluster this session's atoms into L2 scenarios (scene blocks), each
-        citing its member atoms so it stays drift-checkable. Deterministic."""
+        citing its member atoms so it stays drift-checkable. Deterministic.
+        Scoped to one `user` (default the shared "" tenant): the L1 read and the
+        L2 write stay inside the partition, never aggregating across tenants."""
         from .scenario import cluster_atoms
 
         atoms = [{"id": a["id"], "text": a["text"]}
-                 for a in self.store.memories(layer="L1", session=session)]
+                 for a in self.store.memories(layer="L1", session=session, user=user)]
         scenarios = cluster_atoms(atoms, min_shared=min_shared)
         out = []
         for sc in scenarios:
             self.store.add_memory(sc.id, "L2", sc.text, sc.atom_ids, "cluster/v1",
-                                  "atoms sharing a theme", session=session)
+                                  "atoms sharing a theme", session=session, user=user)
             out.append({"scenario_id": sc.id, "atoms": len(sc.atom_ids),
                         "theme": list(sc.theme)})
-        return {"session": session, "scenarios": len(out), "blocks": out}
+        return {"session": session, "user": user, "scenarios": len(out), "blocks": out}
 
     # -- persona (L3) --------------------------------------------------------
-    def persona(self, session: str) -> dict:
+    def persona(self, session: str, user: str = "") -> dict:
         """Synthesize a persona from this session's atoms. Deterministic floor:
         the atoms grouped, with each line bound to its source atom ids (so the
-        persona is itself drift-checkable — L3 cites L2/L1, never free text)."""
-        atoms = self.store.memories(layer="L1", session=session)
+        persona is itself drift-checkable — L3 cites L2/L1, never free text).
+        Scoped to one `user` (default the shared "" tenant): a persona is built
+        from and stored under a single partition, never merged across tenants."""
+        atoms = self.store.memories(layer="L1", session=session, user=user)
         lines = [a["text"] for a in atoms]
         source_ids = [a["id"] for a in atoms]
         text = "\n".join(f"- {ln}" for ln in lines)
-        pid = content_hash(session, "persona", text)[:16]
+        pid = content_hash(session, user, "persona", text)[:16]
         if lines:
             self.store.add_memory(pid, "L3", text, source_ids, "persona/v1",
-                                  "profile synthesized from atoms", session=session)
-        return {"session": session, "persona_id": pid if lines else None,
+                                  "profile synthesized from atoms", session=session,
+                                  user=user)
+        return {"session": session, "user": user, "persona_id": pid if lines else None,
                 "facts": len(lines), "text": text,
                 "grounded_in": source_ids,
                 "note": "persona cites its source atoms -> it is drift-checkable, not free text"}

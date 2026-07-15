@@ -16,7 +16,7 @@ import math
 import re
 from collections.abc import Callable, Sequence
 
-from .receipt import Hit, RecallReceipt
+from .receipt import Hit, RecallReceipt, content_hash
 
 SCHEMA = "mneme.recall/1"
 _TOKEN = re.compile(r"[a-z0-9]+")
@@ -80,7 +80,9 @@ def _rrf(rank: int, k: int = 60) -> float:
 
 def recall(query: str, rows: list, *, strategy: str = "hybrid", top_k: int = 5,
            embedder: Embedder | None = None, rrf_k: int = 60,
-           recency_weight: float = 0.0) -> RecallReceipt:
+           recency_weight: float = 0.0, layer: str | None = None,
+           user: str | None = None, session: str | None = None,
+           as_of: int | None = None) -> RecallReceipt:
     """Rank `rows` (each a mapping with id/text/layer, optional 'ord') against `query`.
 
     strategy: 'keyword' (BM25 only), 'vector' (embedder only), 'hybrid' (RRF of
@@ -109,7 +111,9 @@ def recall(query: str, rows: list, *, strategy: str = "hybrid", top_k: int = 5,
         fusion = "bm25" if strategy == "keyword" else "bm25 (no embedder -> keyword fallback)"
     elif strategy == "vector":
         fused = list(vec_scores)
-        fusion = "cosine"
+        # honest label: with no embedder, no cosine ran — say so, and (via the
+        # keep rule below) surface no hits rather than arbitrary zero-scored rows.
+        fusion = "cosine" if have_vec else "cosine (no embedder -> no ranking)"
     else:
         # RRF over the two rankings (rank position, ties by id for determinism)
         bm_rank = _ranks(bm_scores, ids)
@@ -130,14 +134,27 @@ def recall(query: str, rows: list, *, strategy: str = "hybrid", top_k: int = 5,
         fusion = f"{fusion} + {recency_weight}*rrf(recency by ord)"
 
     order = sorted(range(len(rows)), key=lambda i: (-fused[i], ids[i]))
-    keep = lambda i: fused[i] > 0 or strategy == "vector" or recency_weight > 0
+    # a hit must have actually scored: never surface a zero-scored row as a match
+    # just because a channel was requested (a disabled vector channel scored 0).
+    keep = lambda i: fused[i] > 0 or recency_weight > 0
+    hashes = [r.get("content_sha256", "") for r in rows]
     hits = tuple(
         Hit(memory_id=ids[i], text=texts[i], layer=layers[i],
             bm25=bm_scores[i], vector=vec_scores[i], fused=fused[i],
-            recency=recency[i])
+            recency=recency[i], content_sha256=hashes[i])
         for i in order[:top_k] if keep(i))
+    # bind the scorer DEFINITION so two receipts under different scorers are
+    # distinguishable: a vector receipt that named 'cosine' but ran a different
+    # embedder is no longer indistinguishable from one that ran the built-in.
+    embedder_id = getattr(embedder, "name", None) or (
+        "callable" if embedder is not None else "none")
+    def_sha256 = content_hash(SCHEMA, strategy, fusion, embedder_id,
+                              f"bm25(k1={bm.k1},b={bm.b})", f"rrf_k={rrf_k}")
     return RecallReceipt(schema=SCHEMA, query=query, strategy=strategy,
-                         fusion=fusion, hits=hits, corpus_size=len(rows))
+                         fusion=fusion, hits=hits, corpus_size=len(rows),
+                         def_sha256=def_sha256, top_k=top_k, layer=layer,
+                         user=user, session=session, as_of=as_of,
+                         recency_weight=recency_weight)
 
 
 def _ranks(scores: Sequence[float], ids: Sequence[str]) -> dict[int, int]:
