@@ -28,7 +28,10 @@ def cmd_remember(args) -> int:
 
 def cmd_recall(args) -> int:
     mem = AgentMemory(args.state, embed=getattr(args, "embed", None))
-    receipt = mem.recall(args.query, strategy=args.strategy, top_k=args.top_k, recency_weight=getattr(args, "recency", 0.0), user=getattr(args,"user",None), session=getattr(args,"session",None))
+    receipt = mem.recall(args.query, strategy=args.strategy, top_k=args.top_k,
+                         recency_weight=getattr(args, "recency", 0.0),
+                         user=getattr(args, "user", None), session=getattr(args, "session", None),
+                         layer=getattr(args, "layer", None), as_of=getattr(args, "as_of", None))
     if args.json:
         print(json.dumps(receipt.as_dict(), indent=2))
     else:
@@ -83,6 +86,9 @@ def build_parser() -> argparse.ArgumentParser:
     rec.add_argument("--recency", type=float, default=0.0, help="weight recent memories (0=off; transparent, in the receipt)")
     rec.add_argument("--user", default=None, help="scope recall to one user")
     rec.add_argument("--session", default=None, help="scope recall to one session")
+    rec.add_argument("--layer", default=None, help="scope recall to one layer (default L1)")
+    rec.add_argument("--as-of", type=int, default=None, dest="as_of",
+                     help="recall against the memory state at ordinal N (point-in-time)")
     rec.add_argument("--json", action="store_true")
     rec.set_defaults(func=cmd_recall)
 
