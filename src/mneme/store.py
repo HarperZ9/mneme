@@ -81,6 +81,16 @@ class Store:
             if column.strip('"') not in cols:
                 self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
         self._meta_set("schema_version", self.SCHEMA_VERSION)
+        # anchor the audit head once, so tail truncation is detectable from here
+        # on. A legacy log is anchored at its current tail (past truncation is
+        # unrecoverable, but future truncation is caught).
+        if self._meta_get("audit_count") is None:
+            row = self.conn.execute(
+                "SELECT COUNT(*) c, "
+                "(SELECT entry_sha FROM audit ORDER BY ord DESC LIMIT 1) h "
+                "FROM audit").fetchone()
+            self._meta_set("audit_count", str(row["c"]))
+            self._meta_set("audit_head", row["h"] or "")
 
     # -- meta (small key/value; ordinal + audit anchor + schema version) ------
     def _meta_get(self, key: str) -> str | None:
@@ -229,13 +239,20 @@ class Store:
         prev = self.conn.execute(
             "SELECT entry_sha FROM audit ORDER BY ord DESC LIMIT 1").fetchone()
         prev_sha = prev["entry_sha"] if prev else ""
-        core = f"{op}|{memory_id}|{layer}|{before}|{after}|{reason}"
-        entry = content_hash(prev_sha, core)
+        # hash the fields as SEPARATE content_hash parts (each framed by \x1f), so
+        # a field containing '|' cannot shift bytes across a boundary and forge a
+        # colliding entry hash — a pre-joined "a|b" string could.
+        entry = content_hash(prev_sha, op, memory_id, layer, before, after, reason)
         o = self._next_ord()
         self.conn.execute(
             "INSERT INTO audit(ord,op,memory_id,layer,before_sha,after_sha,reason,entry_sha) "
             "VALUES(?,?,?,?,?,?,?,?)",
             (o, op, memory_id, layer, before, after, reason, entry))
+        # advance the committed head anchor in the same transaction as the row:
+        # verify_audit then rejects a truncated (or emptied) log, not just an
+        # edited one.
+        self._meta_set("audit_count", str(int(self._meta_get("audit_count") or "0") + 1))
+        self._meta_set("audit_head", entry)
         self.conn.commit()
         return {"op": op, "memory_id": memory_id, "layer": layer,
                 "before_sha": before, "after_sha": after, "reason": reason,
@@ -274,17 +291,25 @@ class Store:
         return self.conn.execute("SELECT * FROM audit ORDER BY ord").fetchall()
 
     def verify_audit(self) -> bool:
-        """Re-derive the audit chain; True iff every entry hash reproduces. A
-        deleted, reordered, or edited tombstone breaks it — you cannot quietly
-        forget that you forgot something."""
+        """Re-derive the audit chain; True iff every entry hash reproduces AND
+        the chain still ends at the committed head (count + last entry_sha). A
+        deleted, reordered, edited, OR truncated tombstone breaks it — you cannot
+        quietly forget that you forgot something, and you cannot forget that you
+        forgot by lopping off the tail."""
         from .receipt import content_hash
         prev = ""
+        count = 0
         for e in self.audit_log():
-            core = f"{e['op']}|{e['memory_id']}|{e['layer']}|{e['before_sha']}|{e['after_sha']}|{e['reason']}"
-            prev = content_hash(prev, core)
+            prev = content_hash(prev, e["op"], e["memory_id"], e["layer"],
+                                e["before_sha"], e["after_sha"], e["reason"])
             if prev != e["entry_sha"]:
                 return False
-        return True
+            count += 1
+        head = self._meta_get("audit_head")
+        expected = self._meta_get("audit_count")
+        if head is None or expected is None:
+            return True                 # unanchored legacy log: chain-only check
+        return prev == head and count == int(expected)
 
     def close(self) -> None:
         self.conn.close()
