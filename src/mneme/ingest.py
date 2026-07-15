@@ -18,11 +18,22 @@ composes here. A malformed item is skipped with its reason, never guessed.
 """
 from __future__ import annotations
 
+import re
+
 from .extract import extract_atoms
 from .receipt import content_hash
 
 _L1_CRITERION = "atomic user fact"
 _REQUIRED = ("text",)
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _origin_receipt_present(origin: dict | None) -> bool:
+    """A well-formed origin receipt: a fetchable ref AND a content hash that is
+    at least shaped like a sha256. This is presence-of-a-checkable-receipt, not
+    proof — the recheck (re-fetch, re-hash, compare) is what fully verifies."""
+    return bool(origin) and bool(origin.get("ref")) and bool(
+        _SHA256.match(origin.get("sha256", "")))
 
 
 def _origin(item: dict) -> dict:
@@ -83,7 +94,10 @@ def provenance_chain(memory, memory_id: str) -> dict | None:
             "turn_text": turn["text"] if turn else None,
             "origin": origin,      # {source, ref, method, sha256} or None (native turn)
         })
-    grounded = all(l["origin"] and l["origin"]["sha256"] for l in links)
+    # fail closed: a memory with no source links is NOT externally grounded (all()
+    # over an empty list is vacuously true), and a self-declared origin hash that
+    # is not even sha256-shaped is not a grounding — it is an unverifiable string.
+    grounded = bool(links) and all(_origin_receipt_present(l["origin"]) for l in links)
     return {"schema": "mneme.provenance-chain/1",
             "memory_id": memory_id, "text": memory.store.memory(memory_id)["text"],
             "criterion": prov.criterion, "extractor": prov.extractor,
