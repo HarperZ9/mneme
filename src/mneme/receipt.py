@@ -5,8 +5,9 @@ still faithful to its source, is a black box. mneme binds both:
 
   ProvenanceReceipt — attached to every stored memory: the source it was derived
     from (turn ids), the extractor and criterion that produced it, and a content
-    hash over (text + source). A memory whose source later changes no longer
-    matches this receipt -> DRIFT (see drift.py).
+    hash over (text + source ids + criterion). The memory row additionally
+    snapshots each source's content hash at extraction time, so a source whose
+    content later changes no longer matches -> DRIFT (see drift.py).
 
   RecallReceipt — emitted by every recall: the query, and the ranked hits with
     their component scores (bm25, vector, fused) and the fusion rule. A third
@@ -65,11 +66,18 @@ class Hit:
     vector: float
     fused: float
     recency: float = 0.0        # recency component (0 when recency weighting is off)
+    content_sha256: str = ""    # the store's hash of the memory this hit returned
 
     def as_dict(self) -> dict:
         return {"memory_id": self.memory_id, "text": self.text, "layer": self.layer,
+                "content_sha256": self.content_sha256,
                 "bm25": round(self.bm25, 6), "vector": round(self.vector, 6),
                 "recency": round(self.recency, 6), "fused": round(self.fused, 6)}
+
+
+def _flag(value: str) -> str:
+    """Minimal shell-safe rendering of a value for the recheck command."""
+    return f'"{value}"' if (value == "" or any(c.isspace() for c in value)) else value
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,10 +88,35 @@ class RecallReceipt:
     fusion: str                # the exact rule (e.g. 'rrf(k=60)')
     hits: tuple[Hit, ...]
     corpus_size: int
-    def_sha256: str = field(default="")
+    def_sha256: str = field(default="")   # hash of the scorer DEFINITION (see recall)
+    top_k: int = 5
+    layer: str | None = None
+    user: str | None = None
+    session: str | None = None
+    as_of: int | None = None
+    recency_weight: float = 0.0
+
+    def _recheck(self) -> str:
+        parts = ["mneme recall", _flag(self.query), "--strategy", self.strategy,
+                 "--top-k", str(self.top_k)]
+        if self.layer:
+            parts += ["--layer", self.layer]
+        if self.user is not None:
+            parts += ["--user", _flag(self.user)]
+        if self.session is not None:
+            parts += ["--session", _flag(self.session)]
+        if self.as_of is not None:
+            parts += ["--as-of", str(self.as_of)]
+        if self.recency_weight:
+            parts += ["--recency", str(self.recency_weight)]
+        return " ".join(parts) + "  (re-run over the same store, reproduce the ranking)"
 
     def as_dict(self) -> dict:
         return {"schema": self.schema, "query": self.query, "strategy": self.strategy,
-                "fusion": self.fusion, "corpus_size": self.corpus_size,
+                "fusion": self.fusion, "def_sha256": self.def_sha256,
+                "corpus_size": self.corpus_size,
+                "scope": {"top_k": self.top_k, "layer": self.layer, "user": self.user,
+                          "session": self.session, "as_of": self.as_of,
+                          "recency_weight": self.recency_weight},
                 "hits": [h.as_dict() for h in self.hits],
-                "recheck": "mneme recall --query Q --state DB  (re-run the scorer, reproduce the ranking)"}
+                "recheck": self._recheck()}

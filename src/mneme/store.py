@@ -19,31 +19,9 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from .receipt import ProvenanceReceipt, memory_hash
+from .schema import MIGRATIONS, SCHEMA, SCHEMA_VERSION
 
 LAYERS = ("L0", "L1", "L2", "L3")
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS turns (
-    id TEXT PRIMARY KEY, session TEXT NOT NULL, role TEXT NOT NULL,
-    text TEXT NOT NULL, ord INTEGER NOT NULL, content_sha256 TEXT NOT NULL,
-    origin TEXT NOT NULL DEFAULT ''
-);
-CREATE TABLE IF NOT EXISTS memories (
-    id TEXT PRIMARY KEY, layer TEXT NOT NULL, session TEXT, "user" TEXT NOT NULL DEFAULT '',
-    text TEXT NOT NULL, source_ids TEXT NOT NULL, extractor TEXT NOT NULL,
-    criterion TEXT NOT NULL, content_sha256 TEXT NOT NULL, created_ord INTEGER NOT NULL,
-    valid_until INTEGER, superseded_by TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_mem_layer ON memories(layer);
-CREATE INDEX IF NOT EXISTS idx_mem_session ON memories(session);
-CREATE INDEX IF NOT EXISTS idx_mem_user ON memories("user");
-CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS audit (
-    ord INTEGER PRIMARY KEY, op TEXT NOT NULL, memory_id TEXT NOT NULL,
-    layer TEXT NOT NULL, before_sha TEXT NOT NULL, after_sha TEXT NOT NULL,
-    reason TEXT NOT NULL, entry_sha TEXT NOT NULL
-);
-"""
 
 
 class Store:
@@ -51,11 +29,42 @@ class Store:
     counter (persisted in meta) orders rows without a wall clock, so a rebuild
     from the same inputs is byte-identical."""
 
+    SCHEMA_VERSION = SCHEMA_VERSION
+
     def __init__(self, path: str | Path = ":memory:"):
         self.conn = sqlite3.connect(str(path))
         self.conn.row_factory = sqlite3.Row
-        self.conn.executescript(_SCHEMA)
+        self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Bring an existing DB up to the current schema in place (add any newer
+        column, stamp the version) so a format change never crashes with a raw
+        sqlite traceback."""
+        for table, column, decl in MIGRATIONS:
+            cols = {r["name"] for r in
+                    self.conn.execute(f"PRAGMA table_info({table})").fetchall()}
+            if column.strip('"') not in cols:
+                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+        self._meta_set("schema_version", self.SCHEMA_VERSION)
+        # anchor the audit head once (a legacy log at its current tail), so tail
+        # truncation is detectable from here on
+        if self._meta_get("audit_count") is None:
+            row = self.conn.execute(
+                "SELECT COUNT(*) c, "
+                "(SELECT entry_sha FROM audit ORDER BY ord DESC LIMIT 1) h "
+                "FROM audit").fetchone()
+            self._meta_set("audit_count", str(row["c"]))
+            self._meta_set("audit_head", row["h"] or "")
+
+    # -- meta (small key/value; ordinal + audit anchor + schema version) ------
+    def _meta_get(self, key: str) -> str | None:
+        row = self.conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def _meta_set(self, key: str, value: str) -> None:
+        self.conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", (key, value))
 
     # -- ordinal (clock-free ordering) ---------------------------------------
     def _next_ord(self) -> int:
@@ -102,12 +111,34 @@ class Store:
             raise ValueError(f"layer must be one of {LAYERS}, got {layer!r}")
         sids = list(source_ids)
         sha = memory_hash(text, sids, criterion)
+        # id-collision guard: idempotent for identical content in the same
+        # partition, but never silently REPLACE a row owned by another user or
+        # carrying different content (that is update()'s audited job) — fail
+        # closed with a named error, not a laundered overwrite.
+        prior = self.memory(memory_id)
+        if prior is not None:
+            if prior["user"] != user:
+                raise ValueError(
+                    f"memory id {memory_id!r} already owned by user "
+                    f"{prior['user']!r}; refusing cross-tenant overwrite")
+            if prior["content_sha256"] != sha:
+                raise ValueError(
+                    f"memory id {memory_id!r} exists with different content; "
+                    f"route a content change through update()")
+        # snapshot each source's content hash NOW, so a later change to a source
+        # (turn or cited memory) is caught by re-comparison — the content address
+        # binds source CONTENT, not just ids.
+        src_hashes = {}
+        for sid in sids:
+            src = self.turn(sid) or self.memory(sid)
+            if src is not None:
+                src_hashes[sid] = src["content_sha256"]
         self.conn.execute(
             "INSERT OR REPLACE INTO memories"
-            '(id,layer,session,"user",text,source_ids,extractor,criterion,content_sha256,created_ord) '
-            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+            '(id,layer,session,"user",text,source_ids,extractor,criterion,content_sha256,created_ord,source_hashes) '
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (memory_id, layer, session, user, text, json.dumps(sids), extractor,
-             criterion, sha, self._next_ord()))
+             criterion, sha, self._next_ord(), json.dumps(src_hashes, sort_keys=True)))
         self.conn.commit()
         return ProvenanceReceipt(memory_id, layer, tuple(sids), extractor, criterion, sha)
 
@@ -173,13 +204,19 @@ class Store:
         prev = self.conn.execute(
             "SELECT entry_sha FROM audit ORDER BY ord DESC LIMIT 1").fetchone()
         prev_sha = prev["entry_sha"] if prev else ""
-        core = f"{op}|{memory_id}|{layer}|{before}|{after}|{reason}"
-        entry = content_hash(prev_sha, core)
+        # hash the fields as SEPARATE content_hash parts (each \x1f-framed) so a
+        # field containing '|' cannot shift across a boundary and forge a
+        # colliding entry hash, as a pre-joined "a|b" string could.
+        entry = content_hash(prev_sha, op, memory_id, layer, before, after, reason)
         o = self._next_ord()
         self.conn.execute(
             "INSERT INTO audit(ord,op,memory_id,layer,before_sha,after_sha,reason,entry_sha) "
             "VALUES(?,?,?,?,?,?,?,?)",
             (o, op, memory_id, layer, before, after, reason, entry))
+        # advance the committed head anchor in the same transaction, so
+        # verify_audit rejects a truncated or emptied log, not just an edited one
+        self._meta_set("audit_count", str(int(self._meta_get("audit_count") or "0") + 1))
+        self._meta_set("audit_head", entry)
         self.conn.commit()
         return {"op": op, "memory_id": memory_id, "layer": layer,
                 "before_sha": before, "after_sha": after, "reason": reason,
@@ -218,17 +255,25 @@ class Store:
         return self.conn.execute("SELECT * FROM audit ORDER BY ord").fetchall()
 
     def verify_audit(self) -> bool:
-        """Re-derive the audit chain; True iff every entry hash reproduces. A
-        deleted, reordered, or edited tombstone breaks it — you cannot quietly
-        forget that you forgot something."""
+        """Re-derive the audit chain; True iff every entry hash reproduces AND
+        the chain still ends at the committed head (count + last entry_sha). A
+        deleted, reordered, edited, OR truncated tombstone breaks it — you cannot
+        quietly forget that you forgot something, and you cannot forget that you
+        forgot by lopping off the tail."""
         from .receipt import content_hash
         prev = ""
+        count = 0
         for e in self.audit_log():
-            core = f"{e['op']}|{e['memory_id']}|{e['layer']}|{e['before_sha']}|{e['after_sha']}|{e['reason']}"
-            prev = content_hash(prev, core)
+            prev = content_hash(prev, e["op"], e["memory_id"], e["layer"],
+                                e["before_sha"], e["after_sha"], e["reason"])
             if prev != e["entry_sha"]:
                 return False
-        return True
+            count += 1
+        head = self._meta_get("audit_head")
+        expected = self._meta_get("audit_count")
+        if head is None or expected is None:
+            return True                 # unanchored legacy log: chain-only check
+        return prev == head and count == int(expected)
 
     def close(self) -> None:
         self.conn.close()

@@ -28,7 +28,10 @@ def cmd_remember(args) -> int:
 
 def cmd_recall(args) -> int:
     mem = AgentMemory(args.state, embed=getattr(args, "embed", None))
-    receipt = mem.recall(args.query, strategy=args.strategy, top_k=args.top_k, recency_weight=getattr(args, "recency", 0.0), user=getattr(args,"user",None), session=getattr(args,"session",None))
+    receipt = mem.recall(args.query, strategy=args.strategy, top_k=args.top_k,
+                         recency_weight=getattr(args, "recency", 0.0),
+                         user=getattr(args, "user", None), session=getattr(args, "session", None),
+                         layer=getattr(args, "layer", None), as_of=getattr(args, "as_of", None))
     if args.json:
         print(json.dumps(receipt.as_dict(), indent=2))
     else:
@@ -48,7 +51,7 @@ def cmd_drift(args) -> int:
 
 def cmd_persona(args) -> int:
     mem = AgentMemory(args.state)
-    print(json.dumps(mem.persona(args.session), indent=2))
+    print(json.dumps(mem.persona(args.session, user=getattr(args, "user", "")), indent=2))
     return 0
 
 
@@ -83,6 +86,9 @@ def build_parser() -> argparse.ArgumentParser:
     rec.add_argument("--recency", type=float, default=0.0, help="weight recent memories (0=off; transparent, in the receipt)")
     rec.add_argument("--user", default=None, help="scope recall to one user")
     rec.add_argument("--session", default=None, help="scope recall to one session")
+    rec.add_argument("--layer", default=None, help="scope recall to one layer (default L1)")
+    rec.add_argument("--as-of", type=int, default=None, dest="as_of",
+                     help="recall against the memory state at ordinal N (point-in-time)")
     rec.add_argument("--json", action="store_true")
     rec.set_defaults(func=cmd_recall)
 
@@ -92,6 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     per = sub.add_parser("persona", help="synthesize a persona (L3) grounded in its atoms")
     per.add_argument("session")
+    per.add_argument("--user", default="", help="scope the persona to one user (multi-tenant)")
     per.set_defaults(func=cmd_persona)
 
     prov = sub.add_parser("provenance", help="show a memory's provenance receipt")
@@ -101,6 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
     sc = sub.add_parser("scenarios", help="cluster a session's atoms into L2 scene blocks")
     sc.add_argument("session")
     sc.add_argument("--min-shared", type=int, default=1)
+    sc.add_argument("--user", default="", help="scope the scenarios to one user (multi-tenant)")
     sc.set_defaults(func=cmd_scenarios)
 
     fg = sub.add_parser("forget", help="delete a memory, leaving an auditable tombstone")
@@ -149,6 +157,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     cons = sub.add_parser("consolidate", help="merge near-duplicate memories (audit-tombstoned); surface contradictions")
     cons.add_argument("--session", default=None)
+    cons.add_argument("--user", default=None, help="scope consolidation to one user (never merges across users)")
     cons.add_argument("--plan", action="store_true", help="show the plan without applying it")
     cons.set_defaults(func=cmd_consolidate)
 
@@ -225,7 +234,8 @@ def cmd_entity_graph(args) -> int:
 
 
 def cmd_consolidate(args) -> int:
-    r = AgentMemory(args.state).consolidate(args.session, apply=not args.plan)
+    r = AgentMemory(args.state).consolidate(args.session, apply=not args.plan,
+                                            user=getattr(args, "user", None))
     print(json.dumps(r, indent=2))
     return 0
 
@@ -258,7 +268,8 @@ def cmd_bench(args) -> int:
 
 def cmd_scenarios(args) -> int:
     mem = AgentMemory(args.state)
-    print(json.dumps(mem.build_scenarios(args.session, min_shared=args.min_shared), indent=2))
+    print(json.dumps(mem.build_scenarios(args.session, min_shared=args.min_shared,
+                                         user=getattr(args, "user", "")), indent=2))
     return 0
 
 
