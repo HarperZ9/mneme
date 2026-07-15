@@ -51,7 +51,7 @@ def cmd_drift(args) -> int:
 
 def cmd_persona(args) -> int:
     mem = AgentMemory(args.state)
-    print(json.dumps(mem.persona(args.session), indent=2))
+    print(json.dumps(mem.persona(args.session, user=getattr(args, "user", "")), indent=2))
     return 0
 
 
@@ -98,6 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     per = sub.add_parser("persona", help="synthesize a persona (L3) grounded in its atoms")
     per.add_argument("session")
+    per.add_argument("--user", default="", help="scope the persona to one user (multi-tenant)")
     per.set_defaults(func=cmd_persona)
 
     prov = sub.add_parser("provenance", help="show a memory's provenance receipt")
@@ -107,6 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
     sc = sub.add_parser("scenarios", help="cluster a session's atoms into L2 scene blocks")
     sc.add_argument("session")
     sc.add_argument("--min-shared", type=int, default=1)
+    sc.add_argument("--user", default="", help="scope the scenarios to one user (multi-tenant)")
     sc.set_defaults(func=cmd_scenarios)
 
     fg = sub.add_parser("forget", help="delete a memory, leaving an auditable tombstone")
@@ -155,6 +157,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     cons = sub.add_parser("consolidate", help="merge near-duplicate memories (audit-tombstoned); surface contradictions")
     cons.add_argument("--session", default=None)
+    cons.add_argument("--user", default=None, help="scope consolidation to one user (never merges across users)")
     cons.add_argument("--plan", action="store_true", help="show the plan without applying it")
     cons.set_defaults(func=cmd_consolidate)
 
@@ -231,7 +234,8 @@ def cmd_entity_graph(args) -> int:
 
 
 def cmd_consolidate(args) -> int:
-    r = AgentMemory(args.state).consolidate(args.session, apply=not args.plan)
+    r = AgentMemory(args.state).consolidate(args.session, apply=not args.plan,
+                                            user=getattr(args, "user", None))
     print(json.dumps(r, indent=2))
     return 0
 
@@ -264,7 +268,8 @@ def cmd_bench(args) -> int:
 
 def cmd_scenarios(args) -> int:
     mem = AgentMemory(args.state)
-    print(json.dumps(mem.build_scenarios(args.session, min_shared=args.min_shared), indent=2))
+    print(json.dumps(mem.build_scenarios(args.session, min_shared=args.min_shared,
+                                         user=getattr(args, "user", "")), indent=2))
     return 0
 
 
