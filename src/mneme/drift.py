@@ -1,23 +1,28 @@
 """drift.py — memory that flags its own staleness.
 
 Every other agent-memory system silently keeps a fact after its source changed;
-you find out when the agent acts on a stale memory. mneme re-derives each L1
-atom's content hash from its CURRENT source turns and compares it to the hash
-stored at extraction time. The verdict per memory:
+you find out when the agent acts on a stale memory. mneme snapshots each source's
+content hash at extraction time and, on every check, re-reads the source's CURRENT
+content hash and compares. This works for every layer: an L1 atom's source is a
+turn; an L2 scenario's and L3 persona's sources are the memories they cite. The
+verdict per memory:
 
-  MATCH        every source turn is present and unchanged
-  DRIFT        a source turn's content changed since extraction
-  UNVERIFIABLE a source turn is gone (cannot confirm the memory's grounding)
+  MATCH        every source is present and its content is unchanged
+  DRIFT        a source's content changed since extraction (or the memory row was
+               altered so its own hash no longer reproduces)
+  UNVERIFIABLE a source is gone, the memory cites no source, or a source's
+               extraction-time hash was never recorded (grounding unconfirmable)
 
-This is the freshness verdict none of the class carries. Pure: it reads the
-store and re-hashes; a consumer re-runs it and gets the same verdict.
+Fail closed: absence of a verifiable source is UNVERIFIABLE, never a vacuous
+MATCH. This is the freshness verdict none of the class carries. Pure: it reads
+the store and re-hashes; a consumer re-runs it and gets the same verdict.
 """
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
 
-from .receipt import content_hash, memory_hash
+from .receipt import memory_hash
 
 MATCH = "MATCH"
 DRIFT = "DRIFT"
@@ -44,49 +49,43 @@ def check_memory(store, memory_id: str) -> MemoryVerdict:
     if row is None:
         return MemoryVerdict(memory_id, UNVERIFIABLE, "memory not found", (), ())
     source_ids = json.loads(row["source_ids"])
+    # fail closed: a memory that cites no source has no grounding to verify, so
+    # it can never be a definite MATCH.
+    if not source_ids:
+        return MemoryVerdict(memory_id, UNVERIFIABLE,
+                             "memory cites no sources — grounding unconfirmable", (), ())
+    # the memory row must reproduce its OWN content hash first (detects a direct
+    # edit of the memory's text/sources/criterion in the store)
+    fresh = memory_hash(row["text"], source_ids, row["criterion"])
+    if fresh != row["content_sha256"]:
+        return MemoryVerdict(memory_id, DRIFT,
+                             "stored hash does not reproduce (memory row altered)",
+                             (), ())
+    recorded = json.loads(row["source_hashes"] or "{}")
     missing, changed = [], []
     # a source id is either an L0 turn or another memory (L2 cites L1, L3 cites L2)
     for sid in source_ids:
         cur = store.turn(sid) or store.memory(sid)
-        if cur is None:
+        snap = recorded.get(sid)
+        if cur is None or snap is None:
+            # source gone, or its extraction-time hash was never recorded —
+            # either way its freshness cannot be confirmed
             missing.append(sid)
             continue
-        # was the source's content the same when this memory was derived?
-        # (we cannot know the OLD source hash, so we detect change by re-deriving
-        #  this memory's OWN hash from current sources: if the stored hash no
-        #  longer reproduces, a source it depends on changed)
-    # re-derive the memory hash from its current text + sources + criterion
-    fresh = memory_hash(row["text"], source_ids, row["criterion"])
-    if missing:
-        return MemoryVerdict(memory_id, UNVERIFIABLE,
-                             "source turn(s) gone — grounding unconfirmable",
-                             (), tuple(sorted(missing)))
-    if fresh != row["content_sha256"]:
-        # the memory text or criterion was tampered in the store
-        return MemoryVerdict(memory_id, DRIFT,
-                             "stored hash does not reproduce (memory row altered)",
-                             (), ())
-    # sources present: check whether any source's CURRENT content differs from
-    # what it was — detectable because a turn stores its own content hash and we
-    # can compare the memory's atom text against the live source turn text
-    for sid in source_ids:
-        turn = store.turn(sid)
-        if turn is None:
-            continue
-        # an L1 atom is a substring/derivative of its source turn; if the atom's
-        # text is no longer contained in the (normalized) current turn, the source
-        # changed under it
-        if _normalized(row["text"]) not in _normalized(turn["text"]) and row["layer"] == "L1":
+        # compare the source's CURRENT content hash to the one snapshotted when
+        # this memory was derived: any change to the source's bytes is caught,
+        # for every layer (turn source or cited-memory source)
+        if cur["content_sha256"] != snap:
             changed.append(sid)
     if changed:
         return MemoryVerdict(memory_id, DRIFT,
-                             "source turn changed since extraction",
-                             tuple(sorted(changed)), ())
+                             "source content changed since extraction",
+                             tuple(sorted(changed)), tuple(sorted(missing)))
+    if missing:
+        return MemoryVerdict(memory_id, UNVERIFIABLE,
+                             "source(s) gone or unrecorded — grounding unconfirmable",
+                             (), tuple(sorted(missing)))
     return MemoryVerdict(memory_id, MATCH, "grounding present and unchanged", (), ())
-
-
-def _normalized(text: str) -> str:
-    return " ".join(text.lower().split())
 
 
 def drift_report(store, layer: str | None = "L1") -> dict:

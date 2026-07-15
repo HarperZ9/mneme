@@ -5,8 +5,9 @@ still faithful to its source, is a black box. mneme binds both:
 
   ProvenanceReceipt — attached to every stored memory: the source it was derived
     from (turn ids), the extractor and criterion that produced it, and a content
-    hash over (text + source). A memory whose source later changes no longer
-    matches this receipt -> DRIFT (see drift.py).
+    hash over (text + source ids + criterion). The memory row additionally
+    snapshots each source's content hash at extraction time, so a source whose
+    content later changes no longer matches -> DRIFT (see drift.py).
 
   RecallReceipt — emitted by every recall: the query, and the ranked hits with
     their component scores (bm25, vector, fused) and the fusion rule. A third
