@@ -69,11 +69,13 @@ class AgentMemory:
         > 0 prefers recent memories (transparently — the component is in the
         receipt). `as_of=N` recalls against the memory state at ordinal N
         (point-in-time recall). Cross-session recall is `user=X, session=None`."""
-        rows = [{"id": r["id"], "text": r["text"], "layer": r["layer"], "ord": r["created_ord"]}
+        rows = [{"id": r["id"], "text": r["text"], "layer": r["layer"],
+                 "ord": r["created_ord"], "content_sha256": r["content_sha256"]}
                 for r in self.store.memories(layer=layer or "L1", session=session,
                                              user=user, as_of=as_of)]
         return recall(query, rows, strategy=strategy, top_k=top_k,
-                      embedder=self.embedder, recency_weight=recency_weight)
+                      embedder=self.embedder, recency_weight=recency_weight,
+                      layer=layer or "L1", user=user, session=session, as_of=as_of)
 
     # -- temporal ------------------------------------------------------------
     def supersede(self, old_id: str, new_text: str, *, reason: str = "") -> dict | None:

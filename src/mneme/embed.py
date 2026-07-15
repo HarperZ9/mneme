@@ -42,6 +42,9 @@ class NgramEmbedder:
     def __init__(self, dim: int = 256, n: int = 3):
         self.dim = dim
         self.n = n
+        # names the scorer in the recall receipt's def_sha256 (distinguishes the
+        # built-in channel and its params from an injected model)
+        self.name = f"ngram(dim={dim},n={n})"
 
     def __call__(self, text: str) -> Sequence[float]:
         vec = [0.0] * self.dim
