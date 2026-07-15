@@ -47,7 +47,9 @@ def _tool_defs() -> list[dict]:
              "properties": {
                  "session": {"type": "string"},
                  "turns": {"type": "array", "items": {"type": "object"},
-                           "description": "list of {role, text} turns"}}}},
+                           "description": "list of {role, text} turns"},
+                 "user": {"type": "string",
+                          "description": "tenant to scope this memory to (default shared \"\")"}}}},
         {"name": "mneme.recall",
          "description": "Retrieve memories for a query and return a re-derivable "
                         "ranking receipt (hits with bm25/vector/fused scores).",
@@ -55,7 +57,11 @@ def _tool_defs() -> list[dict]:
              "properties": {
                  "query": {"type": "string"},
                  "strategy": {"type": "string", "enum": ["keyword", "vector", "hybrid"]},
-                 "top_k": {"type": "integer"}}}},
+                 "top_k": {"type": "integer"},
+                 "user": {"type": "string",
+                          "description": "scope recall to one tenant (omit = across all)"},
+                 "session": {"type": "string",
+                             "description": "scope recall to one session (omit = across all)"}}}},
         {"name": "mneme.drift",
          "description": "Verdict every memory's grounding against the current "
                         "store (MATCH / DRIFT / UNVERIFIABLE).",
@@ -78,15 +84,28 @@ def _tool_defs() -> list[dict]:
     ]
 
 
+def _reject_unknown(args: dict, allowed: set[str]) -> None:
+    """A dropped argument is a silent scope error (e.g. a `user` an agent passed
+    that never reached the store). Fail loudly instead of misfiling the write."""
+    extra = set(args) - allowed
+    if extra:
+        raise ValueError(f"unknown argument(s): {sorted(extra)}; allowed: {sorted(allowed)}")
+
+
 def call_tool(name: str, args: dict) -> str:
     mem = AgentMemory(_state_path())
     if name == "mneme.remember":
-        summary = mem.remember(str(args["session"]), list(args["turns"]))
+        _reject_unknown(args, {"session", "turns", "user"})
+        summary = mem.remember(str(args["session"]), list(args["turns"]),
+                               user=str(args.get("user", "")))
         return json.dumps(summary, indent=2, ensure_ascii=False)
     if name == "mneme.recall":
+        _reject_unknown(args, {"query", "strategy", "top_k", "user", "session"})
         receipt = mem.recall(str(args["query"]),
                              strategy=str(args.get("strategy", "hybrid")),
-                             top_k=int(args.get("top_k", 5)))
+                             top_k=int(args.get("top_k", 5)),
+                             user=(str(args["user"]) if "user" in args else None),
+                             session=(str(args["session"]) if "session" in args else None))
         return json.dumps(receipt.as_dict(), indent=2, ensure_ascii=False)
     if name == "mneme.drift":
         return json.dumps(mem.drift(layer=args.get("layer", "L1")), indent=2, ensure_ascii=False)
