@@ -161,3 +161,44 @@ def _ranks(scores: Sequence[float], ids: Sequence[str]) -> dict[int, int]:
     """1-based rank per index, best score first, ties broken by id (stable)."""
     order = sorted(range(len(scores)), key=lambda i: (-scores[i], ids[i]))
     return {i: pos + 1 for pos, i in enumerate(order)}
+
+
+def _scope(receipt) -> dict:
+    """The recall parameters a receipt records, from a RecallReceipt or its as_dict form."""
+    if isinstance(receipt, RecallReceipt):
+        return {"query": receipt.query, "strategy": receipt.strategy, "top_k": receipt.top_k,
+                "layer": receipt.layer, "user": receipt.user, "session": receipt.session,
+                "as_of": receipt.as_of, "recency_weight": receipt.recency_weight}
+    s = receipt.get("scope", {}) or {}
+    return {"query": receipt.get("query", ""), "strategy": receipt.get("strategy", "hybrid"),
+            "top_k": s.get("top_k", 5), "layer": s.get("layer"), "user": s.get("user"),
+            "session": s.get("session"), "as_of": s.get("as_of"),
+            "recency_weight": s.get("recency_weight", 0.0)}
+
+
+def _verifiable(receipt) -> dict:
+    """The re-derivable core of a receipt: the ranked hits (with rounded scores), the
+    scorer-definition hash, and the fusion rule. NOT the human recheck string."""
+    d = receipt.as_dict() if isinstance(receipt, RecallReceipt) else receipt
+    return {"strategy": d.get("strategy"), "fusion": d.get("fusion"),
+            "def_sha256": d.get("def_sha256"), "corpus_size": d.get("corpus_size"),
+            "top_k": (d.get("scope") or {}).get("top_k"), "hits": d.get("hits", [])}
+
+
+def verify_recall(receipt, rows: list, *, embedder: "Embedder | None" = None,
+                  rrf_k: int = 60) -> bool:
+    """Re-derive the recall from ``rows`` and confirm the receipt's ranking.
+
+    Re-runs the same deterministic scorer with the receipt's recorded scope, then checks
+    that the re-derived hits and scorer-definition hash match. A fabricated or tampered
+    ranking fails even if its ``def_sha256`` was left matching, because the ranking is
+    re-derived from the rows, never trusted from the receipt. A store that changed no
+    longer reproduces, so drift is caught. For a vector/hybrid receipt pass the same
+    ``embedder`` (a keyword receipt is fully self-contained); pass the same ``rrf_k`` if
+    the recall used a non-default one. ``receipt`` may be a RecallReceipt or its
+    as_dict() form. Read-only."""
+    p = _scope(receipt)
+    fresh = recall(p["query"], rows, strategy=p["strategy"], top_k=p["top_k"],
+                   embedder=embedder, rrf_k=rrf_k, recency_weight=p["recency_weight"],
+                   layer=p["layer"], user=p["user"], session=p["session"], as_of=p["as_of"])
+    return _verifiable(fresh) == _verifiable(receipt)
