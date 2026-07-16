@@ -40,9 +40,18 @@ hybrid surface the leaders offer, with no required embedding API.
 ## What only mneme does
 
 **A recall you can re-derive.** Every `recall` returns a receipt with the ranked
-hits, their BM25 and vector scores, and the exact fusion rule. Re-run the scorer
-over the same store and you get the identical ranking: the recall is auditable,
-not asserted.
+hits, their BM25 and vector scores, and the exact fusion rule. And `verify_recall`
+ships the check: it re-runs the scorer over the same rows and confirms the ranking,
+so a fabricated or tampered recall is caught even if its definition hash still
+matches, and a store that changed no longer reproduces. The recall is auditable by a
+function you can put in CI, not a claim you take on faith.
+
+```python
+from mneme import recall, verify_recall
+
+r = recall("deploy steps", rows, strategy="hybrid", embedder=embed)
+assert verify_recall(r, rows, embedder=embed)   # re-derived from the store, not trusted
+```
 
 ```bash
 mneme remember alice session.json
