@@ -49,13 +49,17 @@ def _subject(text: str) -> str | None:
 
 
 def plan_consolidation(atoms: list, *, dup_threshold: float = 0.6) -> dict:
-    """Given atom rows (id, text) in ingest order, return a plan:
+    """Given atom rows (id, text, optional user) in ingest order, return a plan:
       merges: [{keep, drop:[...], reason}]  redundant near-duplicates
       contradictions: [{predicate, atoms:[...], newest, note}]  surfaced, not resolved
-    Deterministic; ordered by id. Does not mutate anything."""
+    Deterministic; ordered by id. Does not mutate anything. Merges and
+    contradiction candidates are partitioned by `user`: an atom is never merged
+    with, or contradicted by, another tenant's atom (that would delete one
+    tenant's memory because another said something similar)."""
     rows = list(atoms)                     # keep given (chronological) order
     toks = [_salient(r["text"]) for r in rows]
     subj = [_subject(r["text"]) for r in rows]
+    owner = [r.get("user", "") for r in rows]
     used = set()
     merges = []
     # near-duplicate merge: later atom supersedes an earlier highly-overlapping one
@@ -64,7 +68,7 @@ def plan_consolidation(atoms: list, *, dup_threshold: float = 0.6) -> dict:
             continue
         dupes = []
         for j in range(len(rows)):
-            if j != i and j not in used and subj[i] == subj[j] \
+            if j != i and j not in used and owner[i] == owner[j] and subj[i] == subj[j] \
                     and _overlap(toks[i], toks[j]) >= dup_threshold:
                 dupes.append(j)
         if dupes:
@@ -75,13 +79,14 @@ def plan_consolidation(atoms: list, *, dup_threshold: float = 0.6) -> dict:
                 used.add(k)
             merges.append({"keep": keep, "drop": drop,
                            "reason": f"near-duplicate (overlap >= {dup_threshold})"})
-    # contradiction candidates: same predicate, NOT merged (different objects)
+    # contradiction candidates: same predicate, NOT merged (different objects) —
+    # partitioned by user, so one tenant's fact never "contradicts" another's
     contradictions = []
-    by_pred: dict[str, list[int]] = {}
+    by_pred: dict[tuple[str, str], list[int]] = {}
     for i, p in enumerate(subj):
         if p and i not in used:
-            by_pred.setdefault(p, []).append(i)
-    for pred, idxs in sorted(by_pred.items()):
+            by_pred.setdefault((owner[i], p), []).append(i)
+    for (_owner, pred), idxs in sorted(by_pred.items()):
         if len(idxs) > 1:
             contradictions.append({
                 "predicate": pred,
@@ -93,12 +98,14 @@ def plan_consolidation(atoms: list, *, dup_threshold: float = 0.6) -> dict:
 
 
 def consolidate(memory, session: str | None = None, *, dup_threshold: float = 0.6,
-                apply: bool = True) -> dict:
+                apply: bool = True, user: str | None = None) -> dict:
     """Plan (and, by default, apply) consolidation over a session's atoms.
     Applying forgets the superseded near-duplicates with audit tombstones;
-    contradictions are always surfaced, never auto-resolved. Returns the report."""
-    rows = [{"id": r["id"], "text": r["text"]}
-            for r in memory.store.memories(layer="L1", session=session)]
+    contradictions are always surfaced, never auto-resolved. Returns the report.
+    Even when `user` is None (all tenants), the plan never merges or contradicts
+    atoms across users — each atom carries its owner and the plan partitions by it."""
+    rows = [{"id": r["id"], "text": r["text"], "user": r["user"]}
+            for r in memory.store.memories(layer="L1", session=session, user=user)]
     plan = plan_consolidation(rows, dup_threshold=dup_threshold)
     merged = 0
     if apply:

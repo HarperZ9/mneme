@@ -1,3 +1,5 @@
+<p align="center"><img src=".github/assets/zentropy-banner.png" alt="mneme" width="100%"></p>
+
 # mneme
 
 > Accountable agent memory. The layered memory and hybrid retrieval agents
@@ -34,15 +36,24 @@ L3 persona   the user profile             -> synthesized, citing its atoms
 ```
 
 Retrieval is hybrid: BM25 (pure Python, always on) fused with an optional
-embedding channel by Reciprocal Rank Fusion — the same keyword / semantic /
+embedding channel by Reciprocal Rank Fusion: the same keyword / semantic /
 hybrid surface the leaders offer, with no required embedding API.
 
 ## What only mneme does
 
 **A recall you can re-derive.** Every `recall` returns a receipt with the ranked
-hits, their BM25 and vector scores, and the exact fusion rule. Re-run the scorer
-over the same store and you get the identical ranking — the recall is auditable,
-not asserted.
+hits, their BM25 and vector scores, and the exact fusion rule. And `verify_recall`
+ships the check: it re-runs the scorer over the same rows and confirms the ranking,
+so a fabricated or tampered recall is caught even if its definition hash still
+matches, and a store that changed no longer reproduces. The recall is auditable by a
+function you can put in CI, not a claim you take on faith.
+
+```python
+from mneme import recall, verify_recall
+
+r = recall("deploy steps", rows, strategy="hybrid", embedder=embed)
+assert verify_recall(r, rows, embedder=embed)   # re-derived from the store, not trusted
+```
 
 ```bash
 mneme remember alice session.json
@@ -60,7 +71,7 @@ mneme drift            # -> {"overall":"DRIFT","drifted":["…"], …}  exit 1 o
 ```
 
 **Provenance on every memory.** Every atom names the turn it came from, the
-extractor, the criterion, and a content hash. The persona is not free text — it
+extractor, the criterion, and a content hash. The persona is not free text: it
 cites its atoms, so it is drift-checkable too.
 
 ## Library
@@ -76,13 +87,13 @@ print(mem.drift()["overall"])                     # MATCH until a source changes
 ```
 
 An embedder (`AgentMemory(..., embedder=fn)`) turns on the vector channel; an
-LLM `Extractor` plugs in for richer atoms. Neither is required — the
+LLM `Extractor` plugs in for richer atoms. Neither is required: the
 deterministic floor works with no model and no API.
 
 ## The ecosystem: memory that traces to its source
 
 Point mneme at an accountable intake tool ([gather](https://github.com/HarperZ9/gather),
-the sibling flagship) and the provenance chains end to end — something no
+the sibling flagship) and the provenance chains end to end, something no
 single-purpose memory library can do:
 
 ```
@@ -98,11 +109,11 @@ mneme chain <memory_id>              # -> the web url + content hash it came fro
 An agent that remembers what it researched, and can prove a recalled memory
 traces to the exact bytes fetched from the exact source (`re-fetch the ref,
 re-hash, confirm it equals the origin sha256`). Any intake tool that emits that
-shape composes — mneme never imports gather.
+shape composes; mneme never imports gather.
 
 And the loop closes at the other end. `mneme to-crucible` exports memories as a
-[crucible](https://github.com/HarperZ9/crucible) thesis — each memory a claim
-whose falsification is "its source no longer supports it" — so an **independent
+[crucible](https://github.com/HarperZ9/crucible) thesis (each memory a claim
+whose falsification is "its source no longer supports it"), so an **independent
 judgment organ** certifies the memory's faithfulness, not mneme's own word:
 
 ```
@@ -114,8 +125,8 @@ Nobody else's memory can be independently verified this way.
 ## Accountable forgetting
 
 Every memory system lets you delete a fact. mneme is the only one where the
-deletion is auditable: `forget` and `update` leave a hash-chained tombstone —
-what was forgotten, its hash, and why — so you cannot quietly forget that you
+deletion is auditable: `forget` and `update` leave a hash-chained tombstone,
+what was forgotten, its hash, and why, so you cannot quietly forget that you
 forgot something (required for GDPR-style "right to be forgotten" you can prove).
 
 ```bash
@@ -134,7 +145,7 @@ mneme mcp          # JSON-RPC 2.0 over stdio; MNEME_STATE points at the DB
 
 Tools: `mneme.remember`, `mneme.recall`, `mneme.drift`, `mneme.provenance`. A
 recall through MCP returns the same re-derivable receipt, so the agent (or its
-operator) can see and re-check why a memory was surfaced — the accountability
+operator) can see and re-check why a memory was surfaced; the accountability
 travels with the tool result.
 
 ## Benchmark you can re-run
@@ -145,13 +156,13 @@ reduction; nobody proves the answer *survived* it. mneme measures both.
 ```bash
 mneme bench
 # token_reduction: 76.6%   (full history 125 tok -> avg recalled 29 tok)
-# answer_recall:   100%    (5 probes — every needed fact survived the reduction)
+# answer_recall:   100%    (5 probes, every needed fact survived the reduction)
 ```
 
 A reduction is only reported **alongside** its answer recall, so a number that
 looks great by forgetting the answer is disqualified, not a win. The receipt
 carries the per-probe detail and the exact token estimator, so a third party
-re-runs the measurement over the same conversation and reproduces the number —
+re-runs the measurement over the same conversation and reproduces the number,
 a benchmark you can escrow, not a marketing figure. Point it at your own
 conversation with `--turns convo.json --probes probes.json`.
 
@@ -175,3 +186,16 @@ cites its atoms, so it is drift-checkable too (a scenario whose atom is gone is
 ## License
 
 MIT.
+
+## What this believes
+
+This tool is one lane of a family that holds a single belief steady across
+every surface: knowledge open to anyone who can attain the means; acceptance
+decided by external checks, never reputation; every result re-runnable;
+honest nulls first-class; ownership earned by comprehension; learning woven
+into the work. The full text lives in [CREDO.md](CREDO.md).
+The long form of this belief: [The Unbundling](https://github.com/HarperZ9/flywheel/blob/fix/release-model-identity/docs/essays/2026-07-13-the-unbundling.md).
+
+---
+
+**[Zentropy Labs](https://github.com/ZentropyLabs-ai)** · order out of entropy. An independent lab building evidence-first tools that leave a re-checkable artifact behind. Built by Zain Dana Harper in Seattle. The full workbench is at [Project Telos](https://harperz9.github.io).

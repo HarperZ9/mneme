@@ -81,10 +81,24 @@ def entity_graph(memory, *, user: str | None = None, session: str | None = None)
     L1 atoms. Each edge cites the atom it came from -> drift-checkable. Nodes are
     the subject, the relation objects, and named entities."""
     atoms = memory.store.memories(layer="L1", user=user, session=session)
-    subject = user or "user"
-    nodes: dict[str, dict] = {subject: {"id": subject, "kind": "subject"}}
+    # attribute every relation to the atom's OWNER, not one shared 'user' node.
+    # A default read across all tenants (user=None) then yields one subject node
+    # per tenant instead of flattening two people into a self-contradictory
+    # single subject. When scoped (or the shared "" tenant), the subject label is
+    # the tenant name, falling back to "user" for the unnamed default.
+    default_subject = user or "user"
+    nodes: dict[str, dict] = {}
+
+    def subject_of(row) -> str:
+        s = row["user"] or default_subject
+        nodes.setdefault(s, {"id": s, "kind": "subject"})
+        return s
+
+    if user is not None or not atoms:
+        nodes[default_subject] = {"id": default_subject, "kind": "subject"}
     edges: list[dict] = []
     for a in atoms:
+        subject = subject_of(a)
         for rel in relations_in(a["text"], subject=subject):
             obj = rel["object"]
             nodes.setdefault(obj, {"id": obj, "kind": "value"})
