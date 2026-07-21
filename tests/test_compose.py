@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import pytest
 
 from mneme import AgentMemory
+from mneme.compose import _canonical_json, _record_hash
 from mneme.drift import DRIFT, MATCH, UNVERIFIABLE, MemoryVerdict
 
 TURNS = [
@@ -84,6 +85,20 @@ def test_every_memory_exports_as_a_testable_claim():
         assert meas["tolerance"] == 0.5
         assert meas["method"] == "mneme.drift/v1"
         assert meas["mneme_verdict"] == "MATCH"
+        assert set(meas["recheck"]) == {
+            "schema", "oracle", "memory_id", "grounding_sha256",
+            "measurement_contract_sha256",
+        }
+        assert meas["recheck"]["schema"] == "mneme.recheck/1"
+        assert meas["recheck"]["oracle"] == "mneme:drift/v1"
+        assert meas["recheck"]["memory_id"] == meas["claim"]
+        assert all(
+            len(meas["recheck"][key]) == 64
+            and set(meas["recheck"][key]) <= set("0123456789abcdef")
+            for key in ("grounding_sha256", "measurement_contract_sha256")
+        )
+        assert not ({"path", "command", "argv", "cwd", "environment", "shell"}
+                    & set(meas["recheck"]))
 
 
 def test_drift_flows_into_the_measurement():
@@ -161,6 +176,53 @@ def test_export_is_deterministic():
     a = _mem().to_crucible("s")
     b = _mem().to_crucible("s")
     assert a == b
+
+
+def test_descriptor_hash_canonical_json_golden_vector():
+    grounding = {
+        "memory_id": "m-\u03c0",
+        "content_sha256": "a" * 64,
+        "layer": "L1",
+        "session": "s-\u03b1",
+        "tenant": "u-\u03b2",
+        "extractor": "rule/v1",
+        "criterion": "atomic user fact",
+        "source_ids": ["turn-2", "turn-1"],
+        "source_hashes": {"turn-1": "b" * 64, "turn-2": "c" * 64},
+    }
+    measurement = {
+        "claim": "m-\u03c0",
+        "deviation": 0.0,
+        "tolerance": 0.5,
+        "method": "mneme.drift/v1",
+        "evidence": ["mneme-memory:m-\u03c0"],
+    }
+
+    grounding_bytes = _canonical_json(grounding).encode("utf-8")
+    measurement_bytes = _canonical_json(measurement).encode("utf-8")
+
+    assert grounding_bytes.hex() == (
+        "7b22636f6e74656e745f736861323536223a2261616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c22637269746572696f6e223a2261746f6d696320757365722066616374222c22657874726163746f72223a2272756c652f7631222c226c61796572223a224c31222c226d656d6f72795f6964223a226d2dcf80222c2273657373696f6e223a22732dceb1222c22736f757263655f686173686573223a7b227475726e2d31223a2262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262222c227475726e2d32223a2263636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363227d2c22736f757263655f696473223a5b227475726e2d32222c227475726e2d31225d2c2274656e616e74223a22752dceb2227d"
+    )
+    assert measurement_bytes.hex() == (
+        "7b22636c61696d223a226d2dcf80222c22646576696174696f6e223a302e302c2265766964656e6365223a5b226d6e656d652d6d656d6f72793a6d2dcf80225d2c226d6574686f64223a226d6e656d652e64726966742f7631222c22746f6c6572616e6365223a302e357d"
+    )
+    assert _record_hash(grounding) == "147e42a850409699a7364dc2864d8feb6b3a4e105b7973bbc098c562aca352f6"
+    assert _record_hash(measurement) == "85c640accf75da8f192c3bf65afdb2cf4ebda55ac6c13d6a746c829d21b42ae5"
+
+
+def test_descriptor_creation_rejects_malformed_provenance_shape():
+    memory = AgentMemory(":memory:")
+    memory.store.add_turn("a", "s", "user", "source a")
+    memory.store.add_turn("b", "s", "user", "source b")
+    memory.store.add_memory("m-ab", "L1", "derived", ["a", "b"],
+                            "fixture/v1", "fixture", session="s")
+    memory.store.conn.execute(
+        "UPDATE memories SET source_ids=? WHERE id=?", ('"ab"', "m-ab"))
+    memory.store.conn.commit()
+
+    with pytest.raises(ValueError, match="provenance"):
+        memory.to_crucible("s")
 
 
 def test_cli_and_note_guide_the_composition():

@@ -18,10 +18,21 @@ import sqlite3
 from collections.abc import Iterable
 from pathlib import Path
 
-from .receipt import ProvenanceReceipt, memory_hash
+from .receipt import ProvenanceFormatError, ProvenanceReceipt, memory_hash, validate_source_ids
 from .schema import MIGRATIONS, SCHEMA, SCHEMA_VERSION
 
 LAYERS = ("L0", "L1", "L2", "L3")
+_READ_ONLY_REQUIRED_COLUMNS = {
+    "turns": {"id", "role", "text", "content_sha256"},
+    "memories": {
+        "id", "layer", "session", "user", "text", "source_ids", "extractor",
+        "criterion", "content_sha256", "source_hashes",
+    },
+}
+
+
+class StoreSchemaError(sqlite3.DatabaseError):
+    """A read-only database cannot satisfy Mneme's current read contract."""
 
 
 class Store:
@@ -31,12 +42,40 @@ class Store:
 
     SCHEMA_VERSION = SCHEMA_VERSION
 
-    def __init__(self, path: str | Path = ":memory:"):
-        self.conn = sqlite3.connect(str(path))
+    def __init__(self, path: str | Path = ":memory:", *, read_only: bool = False):
+        if read_only:
+            if str(path) == ":memory:":
+                raise ValueError("read-only Store requires a filesystem database path")
+            uri = Path(path).expanduser().resolve().as_uri() + "?mode=ro"
+            self.conn = sqlite3.connect(uri, uri=True)
+        else:
+            self.conn = sqlite3.connect(str(path))
         self.conn.row_factory = sqlite3.Row
-        self.conn.executescript(SCHEMA)
-        self._migrate()
-        self.conn.commit()
+        if read_only:
+            try:
+                self._validate_read_schema()
+            except Exception:
+                self.conn.close()
+                raise
+        else:
+            self.conn.executescript(SCHEMA)
+            self._migrate()
+            self.conn.commit()
+
+    def _validate_read_schema(self) -> None:
+        problems = []
+        for table, required in _READ_ONLY_REQUIRED_COLUMNS.items():
+            columns = {
+                row["name"]
+                for row in self.conn.execute(f'PRAGMA table_info("{table}")').fetchall()
+            }
+            missing = sorted(required - columns)
+            if missing:
+                problems.append(
+                    f"{table} missing required column(s): {', '.join(missing)}")
+        if problems:
+            raise StoreSchemaError(
+                "read-only Store schema incompatible: " + "; ".join(problems))
 
     def _migrate(self) -> None:
         """Bring an existing DB up to the current schema in place (add any newer
@@ -109,7 +148,10 @@ class Store:
                    session: str | None = None, user: str = "") -> ProvenanceReceipt:
         if layer not in LAYERS:
             raise ValueError(f"layer must be one of {LAYERS}, got {layer!r}")
-        sids = list(source_ids)
+        if isinstance(source_ids, str | bytes):
+            raise ProvenanceFormatError(
+                "malformed provenance: source_ids must be an iterable of source-id strings")
+        sids = validate_source_ids(list(source_ids))
         sha = memory_hash(text, sids, criterion)
         # id-collision guard: idempotent for identical content in the same
         # partition, but never silently REPLACE a row owned by another user or

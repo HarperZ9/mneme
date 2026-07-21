@@ -42,6 +42,71 @@ def memory_hash(text: str, source_ids: list[str], criterion: str) -> str:
     return content_hash(body)
 
 
+class ProvenanceFormatError(ValueError):
+    """Stored provenance is not the strict JSON shape Mneme hashes."""
+
+
+def _unique_object(pairs: list[tuple[str, object]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ProvenanceFormatError(
+                f"malformed provenance: duplicate JSON key {key!r}")
+        result[key] = value
+    return result
+
+
+def _provenance_json(raw: object, field: str) -> object:
+    if not isinstance(raw, str):
+        raise ProvenanceFormatError(
+            f"malformed provenance: {field} must be encoded JSON text")
+    try:
+        return json.loads(raw, object_pairs_hook=_unique_object)
+    except (json.JSONDecodeError, UnicodeError) as exc:
+        raise ProvenanceFormatError(
+            f"malformed provenance: {field} is not valid JSON") from exc
+
+
+def decode_provenance(source_ids_json: object,
+                      source_hashes_json: object) -> tuple[list[str], dict[str, str]]:
+    """Decode the single accepted stored-provenance representation.
+
+    Empty source lists remain valid because Mneme represents them as
+    UNVERIFIABLE. Source identifiers themselves must be non-empty and unique.
+    Snapshot values are lowercase SHA-256 strings; snapshots may omit a cited
+    source when it was unavailable at extraction, but may not name another id.
+    """
+    source_ids = validate_source_ids(
+        _provenance_json(source_ids_json, "source_ids"))
+    source_hashes = _provenance_json(source_hashes_json, "source_hashes")
+    if not isinstance(source_hashes, dict):
+        raise ProvenanceFormatError(
+            "malformed provenance: source_hashes must be an object")
+    for source_id, digest in source_hashes.items():
+        if (not isinstance(source_id, str) or not source_id
+                or not isinstance(digest, str) or len(digest) != 64
+                or any(char not in "0123456789abcdef" for char in digest)):
+            raise ProvenanceFormatError(
+                "malformed provenance: source_hashes must map non-empty source ids "
+                "to lowercase SHA-256 strings")
+        if source_id not in source_ids:
+            raise ProvenanceFormatError(
+                f"malformed provenance: snapshot {source_id!r} is not a cited source")
+    return source_ids, dict(source_hashes)
+
+
+def validate_source_ids(source_ids: object) -> list[str]:
+    """Validate the in-memory form used before hashing or JSON storage."""
+    if not isinstance(source_ids, list) or any(
+            not isinstance(source_id, str) or not source_id for source_id in source_ids):
+        raise ProvenanceFormatError(
+            "malformed provenance: source_ids must be a list of non-empty strings")
+    if len(set(source_ids)) != len(source_ids):
+        raise ProvenanceFormatError(
+            "malformed provenance: source_ids must not contain duplicates")
+    return list(source_ids)
+
+
 @dataclass(frozen=True, slots=True)
 class ProvenanceReceipt:
     memory_id: str

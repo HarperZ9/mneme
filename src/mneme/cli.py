@@ -4,10 +4,52 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import sqlite3
 import sys
+import tempfile
+from pathlib import Path
 
 from . import __version__
 from .memory import AgentMemory
+
+
+def _publish_new_file(path: Path, payload: bytes) -> None:
+    """Durably write ``payload`` and atomically publish it without overwrite."""
+    fd = None
+    temporary = None
+    try:
+        fd, name = tempfile.mkstemp(
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+        )
+        temporary = Path(name)
+        remaining = memoryview(payload)
+        while remaining:
+            written = os.write(fd, remaining)
+            if written <= 0:
+                raise OSError("replay pack write made no forward progress")
+            remaining = remaining[written:]
+        os.fsync(fd)
+        closing_fd = fd
+        fd = None
+        os.close(closing_fd)
+        # A same-directory hard-link publish is atomic and fails if the final
+        # path already exists; unlike replace/rename, it never overwrites.
+        os.link(temporary, path)
+    finally:
+        try:
+            if fd is not None:
+                closing_fd = fd
+                fd = None
+                os.close(closing_fd)
+        finally:
+            if temporary is not None:
+                try:
+                    temporary.unlink()
+                except FileNotFoundError:
+                    pass
 
 
 def _load_turns(path: str) -> list[dict]:
@@ -166,6 +208,14 @@ def build_parser() -> argparse.ArgumentParser:
     xc.add_argument("--layer", default="L1")
     xc.set_defaults(func=cmd_to_crucible)
 
+    replay = sub.add_parser(
+        "replay-crucible",
+        help="re-run an assessment-bound Crucible template against Mneme state",
+    )
+    replay.add_argument("template", help="Crucible replay template JSON")
+    replay.add_argument("--out", required=True, help="new replay-pack JSON path")
+    replay.set_defaults(func=cmd_replay_crucible)
+
     bench = sub.add_parser("bench", help="token-economics benchmark: reduction AND answer-recall, re-derivable")
     bench.add_argument("--turns", default=None, help="JSON conversation file (default: built-in scenario)")
     bench.add_argument("--probes", default=None, help="JSON probes file [{query,answer_contains}]")
@@ -243,6 +293,47 @@ def cmd_consolidate(args) -> int:
 def cmd_to_crucible(args) -> int:
     print(json.dumps(AgentMemory(args.state).to_crucible(args.session, args.layer), indent=2))
     return 0
+
+
+def cmd_replay_crucible(args) -> int:
+    from .replay import ReplayBindingError, replay_crucible
+
+    memory = None
+    try:
+        try:
+            template_text = Path(args.template).read_text(encoding="utf-8")
+        except UnicodeError:
+            print(
+                "replay-crucible failed: template is not valid UTF-8",
+                file=sys.stderr,
+            )
+            return 1
+        template = json.loads(template_text)
+        memory = AgentMemory(args.state, read_only=True)
+        pack = replay_crucible(memory.store, template)
+        try:
+            payload = (
+                json.dumps(pack, indent=2, ensure_ascii=False) + "\n"
+            ).encode("utf-8")
+        except UnicodeError:
+            print(
+                "replay-crucible failed: replay pack is not valid UTF-8",
+                file=sys.stderr,
+            )
+            return 1
+        output = Path(args.out)
+        _publish_new_file(output, payload)
+        print(f"wrote Crucible replay pack to {output}")
+        return 0
+    except FileExistsError:
+        print(f"replay-crucible failed: output already exists: {args.out}", file=sys.stderr)
+        return 1
+    except (OSError, sqlite3.Error, json.JSONDecodeError, ReplayBindingError) as exc:
+        print(f"replay-crucible failed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        if memory is not None:
+            memory.close()
 
 
 def cmd_inspect(args) -> int:
