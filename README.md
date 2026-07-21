@@ -111,16 +111,19 @@ traces to the exact bytes fetched from the exact source (`re-fetch the ref,
 re-hash, confirm it equals the origin sha256`). Any intake tool that emits that
 shape composes; mneme never imports gather.
 
-And the loop closes at the other end. `mneme to-crucible` exports memories as a
-[crucible](https://github.com/HarperZ9/crucible) thesis (each memory a claim
-whose falsification is "its source no longer supports it"), so an **independent
-judgment organ** certifies the memory's faithfulness, not mneme's own word:
+And the loop closes at the other end. `mneme to-crucible` emits a schema-v2
+[crucible](https://github.com/HarperZ9/crucible) export: each memory is a claim
+paired with Mneme's source-bound drift measurement. Crucible independently
+recomputes and seals `MATCH`, `DRIFT`, or `UNVERIFIABLE` from that measurement.
+It does not independently re-read the source; that requires a separate external
+recheck oracle.
 
 ```
-gather (intake) --> mneme (memory) --> crucible (independent verification)
+gather (intake) --> mneme (drift measurement) --> crucible (verdict recomputation)
 ```
 
-Nobody else's memory can be independently verified this way.
+The export keeps measurement and assessment separate without claiming independent
+source certification.
 
 ## Accountable forgetting
 

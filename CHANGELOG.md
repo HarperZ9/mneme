@@ -34,8 +34,9 @@ a re-derivable benchmark, and accountable forgetting.
 - **Token-economics benchmark** — reduction AND answer-recall, re-derivable
   (built-in scenario: 76.6% reduction at 100% answer-recall).
 - **Ecosystem composition** — ingest gather items so a recalled memory traces
-  to its web source (`mneme chain`); export memories as a crucible thesis so an
-  independent organ certifies their faithfulness (`mneme to-crucible`).
+  to its web source (`mneme chain`); export schema-v2 Mneme drift measurements
+  for Crucible to recompute and seal `MATCH`/`DRIFT`/`UNVERIFIABLE`. Independent
+  source re-reading requires a separate external recheck oracle (`mneme to-crucible`).
 - **White-box inspector** — a self-contained HTML view of every layer with
   provenance, drift, and the audit log (`mneme inspect`).
 - **MCP server** — 6 tools over stdio; **runnable tour** (`examples/tour.py`).
