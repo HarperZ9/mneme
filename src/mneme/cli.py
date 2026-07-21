@@ -13,11 +13,44 @@ from pathlib import Path
 from . import __version__
 from .memory import AgentMemory
 
+_WINDOWS = os.name == "nt"
 
-def _publish_new_file(path: Path, payload: bytes) -> None:
-    """Durably write ``payload`` and atomically publish it without overwrite."""
+
+class DuplicateJsonKeyError(ValueError):
+    """A JSON object is ambiguous because the same key appears twice."""
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict:
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise DuplicateJsonKeyError(f"duplicate JSON key {key!r}")
+        value[key] = item
+    return value
+
+
+def _remove_temporary(path: Path) -> OSError | None:
+    """Best-effort cleanup that never hides the operation's primary result."""
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        return exc
+    return None
+
+
+def _publish_new_file(path: Path, payload: bytes) -> str | None:
+    """Flush complete staged bytes, then atomically publish without overwrite.
+
+    Windows rename is a no-replace operation and works on filesystems that do
+    not support hard links. POSIX uses a same-directory hard link so an existing
+    destination is never replaced. A cleanup failure after a committed publish
+    is returned as a warning rather than misreporting the complete output as a
+    failed publication.
+    """
     fd = None
-    temporary = None
+    temporary: Path | None = None
     try:
         fd, name = tempfile.mkstemp(
             dir=path.parent,
@@ -35,21 +68,41 @@ def _publish_new_file(path: Path, payload: bytes) -> None:
         closing_fd = fd
         fd = None
         os.close(closing_fd)
-        # A same-directory hard-link publish is atomic and fails if the final
-        # path already exists; unlike replace/rename, it never overwrites.
-        os.link(temporary, path)
-    finally:
-        try:
-            if fd is not None:
-                closing_fd = fd
-                fd = None
+    except BaseException:
+        if fd is not None:
+            closing_fd = fd
+            fd = None
+            try:
                 os.close(closing_fd)
-        finally:
-            if temporary is not None:
-                try:
-                    temporary.unlink()
-                except FileNotFoundError:
-                    pass
+            except OSError:
+                pass
+        if temporary is not None:
+            _remove_temporary(temporary)
+        raise
+
+    try:
+        if _WINDOWS:
+            # os.rename() fails if the destination exists on Windows and does
+            # not require NTFS hard-link support (for example on ReFS or SMB).
+            os.rename(temporary, path)
+            temporary = None
+        else:
+            # POSIX rename replaces an existing path, so publish through an
+            # exclusive hard link and then remove the staging name.
+            os.link(temporary, path)
+    except BaseException:
+        if temporary is not None:
+            _remove_temporary(temporary)
+        raise
+
+    if temporary is not None:
+        cleanup_error = _remove_temporary(temporary)
+        if cleanup_error is not None:
+            return (
+                "replay pack published, but temporary cleanup failed: "
+                f"{cleanup_error}"
+            )
+    return None
 
 
 def _load_turns(path: str) -> list[dict]:
@@ -308,7 +361,7 @@ def cmd_replay_crucible(args) -> int:
                 file=sys.stderr,
             )
             return 1
-        template = json.loads(template_text)
+        template = json.loads(template_text, object_pairs_hook=_unique_json_object)
         memory = AgentMemory(args.state, read_only=True)
         pack = replay_crucible(memory.store, template)
         try:
@@ -322,13 +375,16 @@ def cmd_replay_crucible(args) -> int:
             )
             return 1
         output = Path(args.out)
-        _publish_new_file(output, payload)
+        publication_warning = _publish_new_file(output, payload)
         print(f"wrote Crucible replay pack to {output}")
+        if publication_warning is not None:
+            print(f"warning: {publication_warning}", file=sys.stderr)
         return 0
     except FileExistsError:
         print(f"replay-crucible failed: output already exists: {args.out}", file=sys.stderr)
         return 1
-    except (OSError, sqlite3.Error, json.JSONDecodeError, ReplayBindingError) as exc:
+    except (OSError, sqlite3.Error, json.JSONDecodeError, DuplicateJsonKeyError,
+            ReplayBindingError) as exc:
         print(f"replay-crucible failed: {exc}", file=sys.stderr)
         return 1
     finally:

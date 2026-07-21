@@ -26,7 +26,8 @@ _READ_ONLY_REQUIRED_COLUMNS = {
     "turns": {"id", "role", "text", "content_sha256"},
     "memories": {
         "id", "layer", "session", "user", "text", "source_ids", "extractor",
-        "criterion", "content_sha256", "source_hashes",
+        "criterion", "content_sha256", "created_ord", "valid_until",
+        "source_hashes",
     },
 }
 
