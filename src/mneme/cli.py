@@ -161,7 +161,7 @@ def build_parser() -> argparse.ArgumentParser:
     cons.add_argument("--plan", action="store_true", help="show the plan without applying it")
     cons.set_defaults(func=cmd_consolidate)
 
-    xc = sub.add_parser("to-crucible", help="export memories as a crucible thesis so an independent organ can certify their faithfulness")
+    xc = sub.add_parser("to-crucible", help="export schema-v2 drift measurements for Crucible assessment")
     xc.add_argument("--session", default=None)
     xc.add_argument("--layer", default="L1")
     xc.set_defaults(func=cmd_to_crucible)
