@@ -4,10 +4,105 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import sqlite3
 import sys
+import tempfile
+from pathlib import Path
 
 from . import __version__
 from .memory import AgentMemory
+
+_WINDOWS = os.name == "nt"
+
+
+class DuplicateJsonKeyError(ValueError):
+    """A JSON object is ambiguous because the same key appears twice."""
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict:
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise DuplicateJsonKeyError(f"duplicate JSON key {key!r}")
+        value[key] = item
+    return value
+
+
+def _remove_temporary(path: Path) -> OSError | None:
+    """Best-effort cleanup that never hides the operation's primary result."""
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        return exc
+    return None
+
+
+def _publish_new_file(path: Path, payload: bytes) -> str | None:
+    """Flush complete staged bytes, then atomically publish without overwrite.
+
+    Windows rename is a no-replace operation and works on filesystems that do
+    not support hard links. POSIX uses a same-directory hard link so an existing
+    destination is never replaced. A cleanup failure after a committed publish
+    is returned as a warning rather than misreporting the complete output as a
+    failed publication.
+    """
+    fd = None
+    temporary: Path | None = None
+    try:
+        fd, name = tempfile.mkstemp(
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+        )
+        temporary = Path(name)
+        remaining = memoryview(payload)
+        while remaining:
+            written = os.write(fd, remaining)
+            if written <= 0:
+                raise OSError("replay pack write made no forward progress")
+            remaining = remaining[written:]
+        os.fsync(fd)
+        closing_fd = fd
+        fd = None
+        os.close(closing_fd)
+    except BaseException:
+        if fd is not None:
+            closing_fd = fd
+            fd = None
+            try:
+                os.close(closing_fd)
+            except OSError:
+                pass
+        if temporary is not None:
+            _remove_temporary(temporary)
+        raise
+
+    try:
+        if _WINDOWS:
+            # os.rename() fails if the destination exists on Windows and does
+            # not require NTFS hard-link support (for example on ReFS or SMB).
+            os.rename(temporary, path)
+            temporary = None
+        else:
+            # POSIX rename replaces an existing path, so publish through an
+            # exclusive hard link and then remove the staging name.
+            os.link(temporary, path)
+    except BaseException:
+        if temporary is not None:
+            _remove_temporary(temporary)
+        raise
+
+    if temporary is not None:
+        cleanup_error = _remove_temporary(temporary)
+        if cleanup_error is not None:
+            return (
+                "replay pack published, but temporary cleanup failed: "
+                f"{cleanup_error}"
+            )
+    return None
 
 
 def _load_turns(path: str) -> list[dict]:
@@ -166,6 +261,14 @@ def build_parser() -> argparse.ArgumentParser:
     xc.add_argument("--layer", default="L1")
     xc.set_defaults(func=cmd_to_crucible)
 
+    replay = sub.add_parser(
+        "replay-crucible",
+        help="re-run an assessment-bound Crucible template against Mneme state",
+    )
+    replay.add_argument("template", help="Crucible replay template JSON")
+    replay.add_argument("--out", required=True, help="new replay-pack JSON path")
+    replay.set_defaults(func=cmd_replay_crucible)
+
     bench = sub.add_parser("bench", help="token-economics benchmark: reduction AND answer-recall, re-derivable")
     bench.add_argument("--turns", default=None, help="JSON conversation file (default: built-in scenario)")
     bench.add_argument("--probes", default=None, help="JSON probes file [{query,answer_contains}]")
@@ -243,6 +346,50 @@ def cmd_consolidate(args) -> int:
 def cmd_to_crucible(args) -> int:
     print(json.dumps(AgentMemory(args.state).to_crucible(args.session, args.layer), indent=2))
     return 0
+
+
+def cmd_replay_crucible(args) -> int:
+    from .replay import ReplayBindingError, replay_crucible
+
+    memory = None
+    try:
+        try:
+            template_text = Path(args.template).read_text(encoding="utf-8")
+        except UnicodeError:
+            print(
+                "replay-crucible failed: template is not valid UTF-8",
+                file=sys.stderr,
+            )
+            return 1
+        template = json.loads(template_text, object_pairs_hook=_unique_json_object)
+        memory = AgentMemory(args.state, read_only=True)
+        pack = replay_crucible(memory.store, template)
+        try:
+            payload = (
+                json.dumps(pack, indent=2, ensure_ascii=False) + "\n"
+            ).encode("utf-8")
+        except UnicodeError:
+            print(
+                "replay-crucible failed: replay pack is not valid UTF-8",
+                file=sys.stderr,
+            )
+            return 1
+        output = Path(args.out)
+        publication_warning = _publish_new_file(output, payload)
+        print(f"wrote Crucible replay pack to {output}")
+        if publication_warning is not None:
+            print(f"warning: {publication_warning}", file=sys.stderr)
+        return 0
+    except FileExistsError:
+        print(f"replay-crucible failed: output already exists: {args.out}", file=sys.stderr)
+        return 1
+    except (OSError, sqlite3.Error, json.JSONDecodeError, DuplicateJsonKeyError,
+            ReplayBindingError) as exc:
+        print(f"replay-crucible failed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        if memory is not None:
+            memory.close()
 
 
 def cmd_inspect(args) -> int:
