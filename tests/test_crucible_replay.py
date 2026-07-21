@@ -14,6 +14,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from mneme import AgentMemory
+import mneme.cli as cli_module
 from mneme.cli import main
 from mneme.replay import ReplayBindingError, replay_crucible
 
@@ -523,6 +524,69 @@ def test_cli_cleans_temp_when_staged_file_close_fails(tmp_path, capsys, monkeypa
     assert list(tmp_path.glob(f".{pack_path.name}.*.tmp")) == []
 
 
+def test_atomic_publisher_uses_no_replace_rename_on_windows(tmp_path, monkeypatch):
+    output = tmp_path / "pack.json"
+    real_rename = os.rename
+    calls = []
+
+    def rename(source, destination):
+        calls.append((Path(source), Path(destination)))
+        return real_rename(source, destination)
+
+    def unexpected_link(*_args, **_kwargs):
+        raise AssertionError("Windows publication must not require hard links")
+
+    monkeypatch.setattr(cli_module, "_WINDOWS", True, raising=False)
+    monkeypatch.setattr(cli_module.os, "rename", rename)
+    monkeypatch.setattr(cli_module.os, "link", unexpected_link)
+
+    warning = cli_module._publish_new_file(output, b"complete")
+
+    assert warning is None
+    assert output.read_bytes() == b"complete"
+    assert len(calls) == 1
+
+
+def test_atomic_publisher_reports_cleanup_warning_after_committed_link(
+        tmp_path, monkeypatch):
+    output = tmp_path / "pack.json"
+    real_unlink = Path.unlink
+
+    def fail_temp_unlink(path, *args, **kwargs):
+        if path.suffix == ".tmp":
+            raise OSError("simulated committed-temp cleanup failure")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(cli_module, "_WINDOWS", False, raising=False)
+    monkeypatch.setattr(Path, "unlink", fail_temp_unlink)
+
+    warning = cli_module._publish_new_file(output, b"complete")
+
+    assert output.read_bytes() == b"complete"
+    assert "published" in warning
+    assert "cleanup failure" in warning
+
+
+def test_atomic_publisher_preserves_destination_conflict_when_cleanup_fails(
+        tmp_path, monkeypatch):
+    output = tmp_path / "pack.json"
+    output.write_bytes(b"existing")
+    real_unlink = Path.unlink
+
+    def fail_temp_unlink(path, *args, **kwargs):
+        if path.suffix == ".tmp":
+            raise OSError("simulated conflict-temp cleanup failure")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(cli_module, "_WINDOWS", False, raising=False)
+    monkeypatch.setattr(Path, "unlink", fail_temp_unlink)
+
+    with pytest.raises(FileExistsError):
+        cli_module._publish_new_file(output, b"replacement")
+
+    assert output.read_bytes() == b"existing"
+
+
 def test_cli_rejects_invalid_utf8_without_traceback(tmp_path, capsys):
     state_path = tmp_path / "mneme.db"
     memory = _state(state_path)
@@ -541,7 +605,13 @@ def test_cli_rejects_invalid_utf8_without_traceback(tmp_path, capsys):
     assert not output_path.exists()
 
 
-def test_cli_names_incompatible_read_only_schema_without_mutation(tmp_path, capsys):
+@pytest.mark.parametrize("missing_column", [
+    "source_hashes",
+    "created_ord",
+    "valid_until",
+])
+def test_cli_names_incompatible_read_only_schema_without_mutation(
+        tmp_path, capsys, missing_column):
     state_path = tmp_path / "legacy.db"
     memory = _state(state_path)
     template = _template(memory)
@@ -549,7 +619,7 @@ def test_cli_names_incompatible_read_only_schema_without_mutation(tmp_path, caps
     template_path.write_text(json.dumps(template), encoding="utf-8")
     memory.close()
     connection = sqlite3.connect(state_path)
-    connection.execute("ALTER TABLE memories DROP COLUMN source_hashes")
+    connection.execute(f"ALTER TABLE memories DROP COLUMN {missing_column}")
     connection.commit()
     connection.close()
     state_sha_before = hashlib.sha256(state_path.read_bytes()).hexdigest()
@@ -561,10 +631,45 @@ def test_cli_names_incompatible_read_only_schema_without_mutation(tmp_path, caps
     captured = capsys.readouterr()
     assert rc != 0
     assert "read-only Store schema incompatible" in captured.err
-    assert "source_hashes" in captured.err
+    assert missing_column in captured.err
     assert "Traceback" not in captured.err
     assert not output_path.exists()
     assert hashlib.sha256(state_path.read_bytes()).hexdigest() == state_sha_before
+
+
+@pytest.mark.parametrize("duplicate", ["schema", "replay_binding"])
+def test_cli_rejects_duplicate_template_keys_without_output(
+        tmp_path, capsys, duplicate):
+    state_path = tmp_path / "mneme.db"
+    memory = _state(state_path)
+    template = _template(memory)
+    template_text = json.dumps(template)
+    if duplicate == "schema":
+        template_text = template_text.replace(
+            '"schema": "crucible.replay-template/1"',
+            '"schema": "crucible.replay-template/999", '
+            '"schema": "crucible.replay-template/1"',
+            1,
+        )
+    else:
+        template_text = template_text.replace(
+            '"replay_binding": {',
+            '"replay_binding": null, "replay_binding": {',
+            1,
+        )
+    template_path = tmp_path / "duplicate-template.json"
+    template_path.write_text(template_text, encoding="utf-8")
+    memory.close()
+    output_path = tmp_path / "pack.json"
+
+    rc = main(["--state", str(state_path), "replay-crucible", str(template_path),
+               "--out", str(output_path)])
+
+    captured = capsys.readouterr()
+    assert rc != 0
+    assert f"duplicate JSON key {duplicate!r}" in captured.err
+    assert "Traceback" not in captured.err
+    assert not output_path.exists()
 
 
 def test_cli_does_not_leave_partial_pack_for_unencodable_json(tmp_path, capsys):
