@@ -1,48 +1,46 @@
-"""compose.py — export memory as independently-verifiable claims (mneme -> crucible).
+"""Compose Mneme drift measurements into a Crucible-compatible export.
 
-mneme's drift check is self-reported: the memory judges its own freshness. The
-ecosystem closes that loop. Every memory becomes a crucible claim — the fact as
-an assertion, with the observation that would refute it (its source no longer
-supports it) as the falsification — so a SEPARATE judgment organ (crucible, the
-sibling flagship) can assess whether the memory is still faithful. Paired with
-the drift verdicts as measurements, an external verifier certifies the memory's
-freshness; it is no longer just mneme's word.
-
-Completes the triangle: gather (intake, with source receipts) -> mneme (memory,
-with provenance + drift) -> crucible (independent verification). Each hop is
-re-checkable and nothing is taken on trust.
-
-Decoupled + zero-dep: emits crucible-shaped dicts (mneme never imports crucible);
-any verifier consuming {title, claims:[{text, falsification}]} composes. The
-measurements map each claim to its drift verdict so the verifier can witness it.
+Mneme supplies source-bound drift measurements. Crucible can independently
+recompute a verdict from those measurements, but does not independently re-read
+the source unless an external recheck oracle is attached. The export remains
+zero-dependency: Mneme emits JSON-compatible dictionaries and never imports
+Crucible.
 """
 from __future__ import annotations
 
 from .drift import DRIFT, MATCH, UNVERIFIABLE, check_memory
 
 
+def _deviation(verdict: str) -> float | None:
+    """Translate Mneme's drift state to Crucible's measurable deviation."""
+    if verdict == MATCH:
+        return 0.0
+    if verdict == DRIFT:
+        return 1.0
+    return None
+
+
 def to_crucible_thesis(memory, session: str | None = None,
                        layer: str = "L1") -> dict:
-    """Export memories as a crucible thesis (register/assess input shape) plus
-    measurements derived from each memory's drift verdict. A downstream
-    `crucible assess` then witnesses whether the memory is still faithful."""
+    """Export memories and Mneme drift measurements for Crucible assessment."""
     rows = memory.store.memories(layer=layer, session=session)
     claims = []
     measurements = []
     for r in rows:
         text = r["text"].rstrip(".")
         claim_text = f"The memory holds: {text}."
-        falsification = ("the source this memory was derived from no longer "
-                         "supports it (a drift check returns DRIFT/UNVERIFIABLE)")
+        falsification = ("a Mneme drift check returns DRIFT; UNVERIFIABLE "
+                         "leaves the claim undetermined")
         claims.append({"id": r["id"], "text": claim_text, "falsification": falsification})
         verdict = check_memory(memory.store, r["id"]).verdict
-        # map the memory's own drift verdict into a crucible measurement: a
-        # MATCH means the claim holds (deviation 0); DRIFT/UNVERIFIABLE do not.
         measurements.append({
-            "claim_id": r["id"],
-            "predicted": 0.0, "observed": 0.0 if verdict == MATCH else 1.0,
-            "tolerance": 0.5, "trusted": True,
-            "mneme_verdict": verdict})
+            "claim": r["id"],
+            "deviation": _deviation(verdict),
+            "tolerance": 0.5,
+            "method": "mneme.drift/v1",
+            "evidence": [f"mneme-memory:{r['id']}"],
+            "mneme_verdict": verdict,
+        })
     thesis = {
         "title": f"mneme memory faithfulness — {session or 'all sessions'}",
         "disposition": "publishable",
@@ -50,11 +48,11 @@ def to_crucible_thesis(memory, session: str | None = None,
         "source": "mneme-export",
     }
     return {
-        "schema": "mneme.crucible-export/1",
+        "schema": "mneme.crucible-export/2",
         "thesis": thesis,
         "measurements": measurements,
-        "note": ("register the thesis and assess it with these measurements in "
-                 "crucible to get an INDEPENDENT verdict on the memory's "
-                 "faithfulness — not mneme's self-report"),
+        "note": ("Crucible recomputes its verdict from Mneme's drift measurement; "
+                 "it does not independently re-read the source unless an external "
+                 "recheck oracle is attached."),
         "recheck": "crucible register thesis.json && crucible assess thesis.json --measurements m.json",
     }
