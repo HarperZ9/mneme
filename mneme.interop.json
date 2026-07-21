@@ -1,0 +1,62 @@
+{
+  "organ": "mneme",
+  "invoke": {
+    "cli": "mneme",
+    "mcp_server": "mneme.mcp:serve",
+    "python_import": "mneme"
+  },
+  "emits": [
+    {
+      "capability": "mneme.crucible-export/1",
+      "title": "memory as crucible thesis",
+      "module": "src/mneme/compose.py:to_crucible_thesis",
+      "summary": "",
+      "consumable_as": [
+        "crucible.thesis/1"
+      ]
+    },
+    {
+      "capability": "mneme.provenance-chain/1",
+      "title": "memory -> source origin",
+      "module": "src/mneme/ingest.py:provenance_chain",
+      "summary": "",
+      "consumable_as": []
+    },
+    {
+      "capability": "mneme.recall/1",
+      "title": "re-derivable recall receipt",
+      "module": "src/mneme/receipt.py:RecallReceipt.as_dict",
+      "summary": "",
+      "consumable_as": []
+    },
+    {
+      "capability": "mneme.drift-report/1",
+      "title": "memory faithfulness verdicts",
+      "module": "src/mneme/drift.py:drift_report",
+      "summary": "",
+      "consumable_as": []
+    }
+  ],
+  "consumes": [
+    {
+      "capability": "gather.items/1",
+      "title": "accountable intake items",
+      "module": "src/mneme/ingest.py:from_gather",
+      "summary": "",
+      "consumable_as": []
+    },
+    {
+      "capability": "conversation-turns/1",
+      "title": "raw turns to remember",
+      "module": "src/mneme/memory.py:AgentMemory.remember",
+      "summary": "",
+      "consumable_as": []
+    }
+  ],
+  "evidence": [
+    "src/mneme/compose.py",
+    "src/mneme/ingest.py",
+    "src/mneme/receipt.py",
+    "src/mneme/drift.py"
+  ]
+}
