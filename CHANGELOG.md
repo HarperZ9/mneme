@@ -36,9 +36,24 @@ a re-derivable benchmark, and accountable forgetting.
 - **Ecosystem composition** — ingest gather items so a recalled memory traces
   to its web source (`mneme chain`); export schema-v2 Mneme drift measurements
   for Crucible to recompute and seal `MATCH`/`DRIFT`/`UNVERIFIABLE`. Independent
-  source re-reading requires a separate external recheck oracle (`mneme to-crucible`).
+  source re-reading uses assessment-bound `mneme.recheck/1` descriptors and the
+  zero-dependency `mneme replay-crucible` pack producer; descriptors contain no
+  paths or commands (`mneme to-crucible`).
+- **Tamper-honest source drift** — checks re-hash current turn or cited-memory
+  fields, so direct SQLite byte edits cannot preserve a false `MATCH` by leaving
+  a stale stored hash behind.
+- **Strict replay provenance** — one decoder validates source-id lists and
+  source-hash maps across drift, descriptor, and replay paths, closing JSON shape
+  confusion such as `"ab"` versus `["a", "b"]`.
+- **Non-mutating mixed replay** — `replay-crucible` opens state read-only,
+  consumes `crucible.replay-template/1`, verifies and preserves a compact
+  `crucible.replay-set/1` descriptor binding without descriptorless assessment
+  rows, and atomically emits `crucible.replay-pack/1` without overwrite; invalid
+  UTF-8 and incompatible read-only schemas are named CLI errors rather than
+  tracebacks. Schema-less historical templates retain the complete measurement-
+  seal fallback only when no replay binding is present.
 - **White-box inspector** — a self-contained HTML view of every layer with
   provenance, drift, and the audit log (`mneme inspect`).
 - **MCP server** — 6 tools over stdio; **runnable tour** (`examples/tour.py`).
-- Zero runtime dependencies (stdlib sqlite3); deterministic; 62 tests; CI on
+- Zero runtime dependencies (stdlib sqlite3); deterministic; 100+ tests; CI on
   3 OS × 3 Python + a wheel-install job.

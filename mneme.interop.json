@@ -7,13 +7,20 @@
   },
   "emits": [
     {
-      "capability": "mneme.crucible-export/1",
+      "capability": "mneme.crucible-export/2",
       "title": "memory as crucible thesis",
       "module": "src/mneme/compose.py:to_crucible_thesis",
-      "summary": "",
+      "summary": "claims, drift measurements, and declarative mneme.recheck/1 descriptors",
       "consumable_as": [
         "crucible.thesis/1"
       ]
+    },
+    {
+      "capability": "crucible.replay-pack/1",
+      "title": "assessment-bound Mneme drift replay",
+      "module": "src/mneme/replay.py:replay_crucible",
+      "summary": "replays descriptor-bound measurements without importing Crucible or executing commands",
+      "consumable_as": []
     },
     {
       "capability": "mneme.provenance-chain/1",
@@ -51,12 +58,21 @@
       "module": "src/mneme/memory.py:AgentMemory.remember",
       "summary": "",
       "consumable_as": []
+    },
+    {
+      "capability": "crucible.replay-template/1",
+      "title": "assessment-bound measurement replay template",
+      "module": "src/mneme/replay.py:replay_crucible",
+      "summary": "decoded Crucible template plus an explicitly supplied Mneme state",
+      "consumable_as": []
     }
   ],
   "evidence": [
     "src/mneme/compose.py",
     "src/mneme/ingest.py",
     "src/mneme/receipt.py",
-    "src/mneme/drift.py"
+    "src/mneme/drift.py",
+    "src/mneme/replay.py",
+    "tests/test_crucible_replay.py"
   ]
 }

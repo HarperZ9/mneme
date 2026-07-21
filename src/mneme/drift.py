@@ -19,10 +19,10 @@ the store and re-hashes; a consumer re-runs it and gets the same verdict.
 """
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 
-from .receipt import memory_hash
+from .receipt import (ProvenanceFormatError, content_hash, decode_provenance,
+                      memory_hash)
 
 MATCH = "MATCH"
 DRIFT = "DRIFT"
@@ -48,7 +48,11 @@ def check_memory(store, memory_id: str) -> MemoryVerdict:
     row = store.memory(memory_id)
     if row is None:
         return MemoryVerdict(memory_id, UNVERIFIABLE, "memory not found", (), ())
-    source_ids = json.loads(row["source_ids"])
+    try:
+        source_ids, recorded = decode_provenance(
+            row["source_ids"], row["source_hashes"])
+    except ProvenanceFormatError as exc:
+        return MemoryVerdict(memory_id, DRIFT, str(exc), (), ())
     # fail closed: a memory that cites no source has no grounding to verify, so
     # it can never be a definite MATCH.
     if not source_ids:
@@ -56,26 +60,55 @@ def check_memory(store, memory_id: str) -> MemoryVerdict:
                              "memory cites no sources — grounding unconfirmable", (), ())
     # the memory row must reproduce its OWN content hash first (detects a direct
     # edit of the memory's text/sources/criterion in the store)
-    fresh = memory_hash(row["text"], source_ids, row["criterion"])
+    try:
+        fresh = memory_hash(row["text"], source_ids, row["criterion"])
+    except (AttributeError, TypeError, UnicodeError):
+        return MemoryVerdict(memory_id, DRIFT,
+                             "stored hash does not reproduce (memory row altered)",
+                             (), ())
     if fresh != row["content_sha256"]:
         return MemoryVerdict(memory_id, DRIFT,
                              "stored hash does not reproduce (memory row altered)",
                              (), ())
-    recorded = json.loads(row["source_hashes"] or "{}")
     missing, changed = [], []
     # a source id is either an L0 turn or another memory (L2 cites L1, L3 cites L2)
     for sid in source_ids:
-        cur = store.turn(sid) or store.memory(sid)
-        snap = recorded.get(sid)
-        if cur is None or snap is None:
-            # source gone, or its extraction-time hash was never recorded —
-            # either way its freshness cannot be confirmed
+        turn = store.turn(sid)
+        cur = turn or store.memory(sid)
+        if cur is None:
             missing.append(sid)
             continue
-        # compare the source's CURRENT content hash to the one snapshotted when
-        # this memory was derived: any change to the source's bytes is caught,
-        # for every layer (turn source or cited-memory source)
-        if cur["content_sha256"] != snap:
+        # Re-hash the source's actual fields. Trusting only content_sha256 lets
+        # a direct SQLite edit preserve a stale stored hash and falsely MATCH.
+        if turn is not None:
+            try:
+                fresh_source = content_hash(cur["role"], cur["text"])
+            except (AttributeError, TypeError, UnicodeError):
+                changed.append(sid)
+                continue
+        else:
+            try:
+                current_source_ids, _ = decode_provenance(
+                    cur["source_ids"], cur["source_hashes"])
+                fresh_source = memory_hash(cur["text"], current_source_ids,
+                                           cur["criterion"])
+            except (AttributeError, TypeError, UnicodeError, ProvenanceFormatError):
+                # Malformed provenance is a content change, not trustworthy
+                # evidence that the grounding is still current.
+                changed.append(sid)
+                continue
+        # Compare both the actual fields and the stored address to the original
+        # snapshot. This detects changed bytes and a separately forged/stale
+        # content_sha256 field.
+        if fresh_source != cur["content_sha256"]:
+            changed.append(sid)
+            continue
+        # A present row is always re-hashed before absence of the extraction
+        # snapshot is considered. Stale current bytes are provable DRIFT.
+        snap = recorded.get(sid)
+        if snap is None:
+            missing.append(sid)
+        elif fresh_source != snap:
             changed.append(sid)
     if changed:
         return MemoryVerdict(memory_id, DRIFT,
