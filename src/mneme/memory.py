@@ -28,9 +28,9 @@ class AgentMemory:
     def __init__(self, path: str | Path = ":memory:", *,
                  extractor: Extractor | None = None,
                  embedder: Embedder | None = None,
-                 embed=None):
+                 embed=None, read_only: bool = False):
         from .embed import resolve_embedder
-        self.store = Store(path)
+        self.store = Store(path, read_only=read_only)
         self.extractor = extractor or RuleExtractor()
         # `embed="ngram"` turns on the zero-dep local vector channel; `embedder=`
         # takes a real embedding model. embedder wins if both are given.
@@ -127,6 +127,11 @@ class AgentMemory:
         an independent judgment organ can certify the memory's faithfulness."""
         from .compose import to_crucible_thesis
         return to_crucible_thesis(self, session, layer)
+
+    def replay_crucible(self, template: dict) -> dict:
+        """Re-run a decoded Crucible replay template against this state."""
+        from .replay import replay_crucible
+        return replay_crucible(self.store, template)
 
     def consolidate(self, session: str | None = None, *, dup_threshold: float = 0.6,
                     apply: bool = True, user: str | None = None) -> dict:

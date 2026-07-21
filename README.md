@@ -115,11 +115,37 @@ And the loop closes at the other end. `mneme to-crucible` emits a schema-v2
 [crucible](https://github.com/HarperZ9/crucible) export: each memory is a claim
 paired with Mneme's source-bound drift measurement. Crucible independently
 recomputes and seals `MATCH`, `DRIFT`, or `UNVERIFIABLE` from that measurement.
-It does not independently re-read the source; that requires a separate external
-recheck oracle.
+Each exported measurement now carries a declarative `mneme.recheck/1`
+descriptor. After Crucible writes an assessment-bound replay template, Mneme
+can re-read the supplied state and fill its replay pack without importing
+Crucible or embedding a database path or executable command in the descriptor:
+
+```bash
+crucible recheck REGISTRY --template replay-template.json
+mneme --state mneme.db replay-crucible replay-template.json --out replay-pack.json
+crucible recheck REGISTRY --pack replay-pack.json --json
+```
+
+The replay command fails closed when the assessment triple, claim binding,
+descriptor, original measurement contract, or target memory grounding differs.
+Ordinary source drift remains a replay result (`1.0`); a missing source remains
+unverifiable (`null`). Crucible still does not independently re-read Mneme's
+source—the source recheck is Mneme-owned and Crucible verifies that the replayed
+measurement exactly reproduces its sealed contract.
+
+The command consumes `crucible.replay-template/1`, opens the supplied SQLite
+state read-only, verifies and preserves the compact descriptor-only
+`crucible.replay-set/1` binding, and emits `crucible.replay-pack/1`. The binding
+records descriptor and skipped-row counts without disclosing descriptorless
+assessment rows. Historical schema-less templates remain compatible only when
+they have no replay binding and their complete measurement seal reproduces;
+bound templates require the canonical schema. Read-only schema compatibility is
+checked without migration, and a completed, synced pack is published atomically
+without overwriting an existing path. Malformed provenance is rejected before
+descriptor or pack creation; replay never rewrites the evidence database.
 
 ```
-gather (intake) --> mneme (drift measurement) --> crucible (verdict recomputation)
+gather (intake) --> mneme (drift + replay) --> crucible (sealed recomputation)
 ```
 
 The export keeps measurement and assessment separate without claiming independent
