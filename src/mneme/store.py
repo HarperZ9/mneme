@@ -13,8 +13,13 @@ drift (drift.py) are separate organs that read/write through it.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import sqlite3
+import tempfile
+import time
+import weakref
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -22,6 +27,7 @@ from .receipt import ProvenanceFormatError, ProvenanceReceipt, memory_hash, vali
 from .schema import MIGRATIONS, SCHEMA, SCHEMA_VERSION
 
 LAYERS = ("L0", "L1", "L2", "L3")
+SQLITE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
 _READ_ONLY_REQUIRED_COLUMNS = {
     "turns": {"id", "role", "text", "content_sha256"},
     "memories": {
@@ -36,6 +42,145 @@ class StoreSchemaError(sqlite3.DatabaseError):
     """A read-only database cannot satisfy Mneme's current read contract."""
 
 
+def _check_snapshot_deadline(deadline: float) -> None:
+    if time.monotonic() > deadline:
+        raise StoreSchemaError("timed out creating the private replay snapshot")
+
+
+def _snapshot_fingerprint(
+        path: Path, *, deadline: float) -> tuple[int, int, int, int, int, str]:
+    _check_snapshot_deadline(deadline)
+    stat = path.stat()
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            _check_snapshot_deadline(deadline)
+            digest.update(chunk)
+    _check_snapshot_deadline(deadline)
+    return (
+        stat.st_dev,
+        stat.st_ino,
+        stat.st_nlink,
+        stat.st_size,
+        stat.st_mtime_ns,
+        digest.hexdigest(),
+    )
+
+
+def quiescent_snapshot_path(path: str | Path) -> Path:
+    """Validate a private, rollback-journal source for evidence-safe replay."""
+    if str(path) == ":memory:":
+        raise StoreSchemaError(
+            "read-only replay requires a quiescent filesystem snapshot, not :memory:"
+        )
+    snapshot = Path(path).expanduser().resolve()
+    stat = snapshot.stat()
+    if stat.st_nlink != 1:
+        raise StoreSchemaError(
+            "read-only replay requires a single-link snapshot; hardlink aliases "
+            "can hide live SQLite sidecars"
+        )
+    sidecars = [Path(f"{snapshot}{suffix}") for suffix in SQLITE_SIDECAR_SUFFIXES]
+    present = [sidecar.name for sidecar in sidecars if sidecar.exists()]
+    if present:
+        raise StoreSchemaError(
+            "read-only replay requires a quiescent snapshot without "
+            f"SQLite sidecars; found: {', '.join(present)}"
+        )
+    with snapshot.open("rb") as source:
+        header = source.read(20)
+    if (header.startswith(b"SQLite format 3\x00") and len(header) >= 20
+            and (header[18] == 2 or header[19] == 2)):
+        raise StoreSchemaError(
+            "read-only replay requires a rollback-journal snapshot; checkpoint "
+            "and copy WAL-mode state with SQLite's backup API first"
+        )
+    return snapshot
+
+
+def _private_replay_snapshot(source_path: Path) -> Path:
+    """Materialize a SQLite-consistent process-owned snapshot and seal its source."""
+    deadline = time.monotonic() + 10.0
+    source_path = quiescent_snapshot_path(source_path)
+    before = _snapshot_fingerprint(source_path, deadline=deadline)
+    fd, name = tempfile.mkstemp(prefix="mneme-replay-", suffix=".db")
+    os.close(fd)
+    private_path = Path(name)
+    source = destination = None
+    try:
+        def bounded_progress(_status: int, _remaining: int, _total: int) -> None:
+            _check_snapshot_deadline(deadline)
+
+        source = sqlite3.connect(
+            source_path.as_uri() + "?mode=ro",
+            uri=True,
+            timeout=1.0,
+        )
+        quiescent_snapshot_path(source_path)
+        destination = sqlite3.connect(str(private_path))
+        source.backup(
+            destination,
+            pages=256,
+            progress=bounded_progress,
+            sleep=0.05,
+        )
+        destination.set_progress_handler(
+            lambda: int(time.monotonic() > deadline),
+            1000,
+        )
+        try:
+            row = destination.execute("PRAGMA quick_check").fetchone()
+        except sqlite3.OperationalError as exc:
+            if time.monotonic() > deadline:
+                raise StoreSchemaError(
+                    "timed out creating the private replay snapshot"
+                ) from exc
+            raise
+        finally:
+            destination.set_progress_handler(None, 0)
+        _check_snapshot_deadline(deadline)
+        if row is None or row[0] != "ok":
+            raise StoreSchemaError("private replay snapshot failed SQLite quick_check")
+        destination.close()
+        destination = None
+        source.close()
+        source = None
+        quiescent_snapshot_path(source_path)
+        if _snapshot_fingerprint(source_path, deadline=deadline) != before:
+            raise StoreSchemaError(
+                "replay source changed while its private snapshot was created"
+            )
+        return private_path
+    except BaseException:
+        if destination is not None:
+            destination.close()
+        if source is not None:
+            source.close()
+        private_path.unlink(missing_ok=True)
+        raise
+
+
+def _close_private_snapshot(
+        conn: sqlite3.Connection, path: Path) -> str | None:
+    """Close a private replay connection and best-effort remove all owned files."""
+    errors = []
+    try:
+        conn.close()
+    except (OSError, sqlite3.Error) as exc:
+        errors.append(f"connection close failed: {exc}")
+    for suffix in ("", *SQLITE_SIDECAR_SUFFIXES):
+        owned_path = Path(f"{path}{suffix}")
+        try:
+            owned_path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            errors.append(f"could not remove {owned_path.name}: {exc}")
+    if errors:
+        return "private replay cleanup incomplete: " + "; ".join(errors)
+    return None
+
+
 class Store:
     """Thin, deterministic wrapper over a SQLite memory DB. A monotonic `ord`
     counter (persisted in meta) orders rows without a wall clock, so a rebuild
@@ -43,12 +188,31 @@ class Store:
 
     SCHEMA_VERSION = SCHEMA_VERSION
 
-    def __init__(self, path: str | Path = ":memory:", *, read_only: bool = False):
+    def __init__(self, path: str | Path = ":memory:", *, read_only: bool = False,
+                 immutable_snapshot: bool = False):
+        self.read_only = read_only
+        self.immutable_snapshot = immutable_snapshot
+        self.private_snapshot_path: Path | None = None
+        self._private_finalizer: weakref.finalize | None = None
+        if immutable_snapshot and not read_only:
+            raise ValueError("immutable_snapshot=True requires read_only=True")
         if read_only:
             if str(path) == ":memory:":
                 raise ValueError("read-only Store requires a filesystem database path")
-            uri = Path(path).expanduser().resolve().as_uri() + "?mode=ro"
-            self.conn = sqlite3.connect(uri, uri=True)
+            if immutable_snapshot:
+                self.private_snapshot_path = _private_replay_snapshot(
+                    Path(path).expanduser().resolve()
+                )
+                uri = self.private_snapshot_path.as_uri() + "?mode=ro&immutable=1"
+            else:
+                uri = Path(path).expanduser().resolve().as_uri() + "?mode=ro"
+            try:
+                self.conn = sqlite3.connect(uri, uri=True)
+            except BaseException:
+                if self.private_snapshot_path is not None:
+                    self.private_snapshot_path.unlink(missing_ok=True)
+                    self.private_snapshot_path = None
+                raise
         else:
             self.conn = sqlite3.connect(str(path))
         self.conn.row_factory = sqlite3.Row
@@ -57,11 +221,21 @@ class Store:
                 self._validate_read_schema()
             except Exception:
                 self.conn.close()
+                if self.private_snapshot_path is not None:
+                    self.private_snapshot_path.unlink(missing_ok=True)
+                    self.private_snapshot_path = None
                 raise
         else:
             self.conn.executescript(SCHEMA)
             self._migrate()
             self.conn.commit()
+        if self.private_snapshot_path is not None:
+            self._private_finalizer = weakref.finalize(
+                self,
+                _close_private_snapshot,
+                self.conn,
+                self.private_snapshot_path,
+            )
 
     def _validate_read_schema(self) -> None:
         problems = []
@@ -318,5 +492,10 @@ class Store:
             return True                 # unanchored legacy log: chain-only check
         return prev == head and count == int(expected)
 
-    def close(self) -> None:
+    def close(self) -> str | None:
+        if self._private_finalizer is not None and self._private_finalizer.alive:
+            warning = self._private_finalizer()
+            self.private_snapshot_path = None
+            return warning
         self.conn.close()
+        return None
