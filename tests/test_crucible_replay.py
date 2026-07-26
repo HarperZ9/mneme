@@ -1,11 +1,14 @@
 """Falsifiers for Mneme-owned production of Crucible replay packs."""
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import os
 import sqlite3
 import sys
+import tempfile
+import threading
 from copy import deepcopy
 from pathlib import Path
 
@@ -453,6 +456,9 @@ def test_cli_writes_strict_utf8_pack_and_refuses_overwrite(tmp_path, capsys):
     assert "already exists" in capsys.readouterr().err
     assert pack_path.read_bytes() == published
     assert list(tmp_path.glob(f".{pack_path.name}.*.tmp")) == []
+    assert not Path(f"{state_path}-wal").exists()
+    assert not Path(f"{state_path}-shm").exists()
+    assert not Path(f"{state_path}-journal").exists()
 
 
 def test_cli_cleans_partial_temp_and_retry_succeeds_after_write_error(
@@ -502,21 +508,32 @@ def test_cli_cleans_temp_when_staged_file_close_fails(tmp_path, capsys, monkeypa
     pack_path = tmp_path / "pack.json"
 
     real_close = os.close
-    failed = False
+    staged_fds: set[int] = set()
 
-    def close_then_fail(fd):
-        nonlocal failed
-        if not failed:
-            failed = True
+    def close_staged_then_fail(fd):
+        # Only fail for the descriptor the atomic publisher staged. A bare
+        # "fail the first os.close" patch fires inside Store.__init__ instead,
+        # so it never exercises _publish_new_file at all.
+        if fd in staged_fds:
+            staged_fds.discard(fd)
             real_close(fd)
             raise OSError("simulated staged close failure")
         return real_close(fd)
 
-    monkeypatch.setattr(os, "close", close_then_fail)
+    real_mkstemp = cli_module.tempfile.mkstemp
+
+    def tracking_mkstemp(*args, **kwargs):
+        fd, name = real_mkstemp(*args, **kwargs)
+        staged_fds.add(fd)
+        return fd, name
+
+    monkeypatch.setattr(cli_module.tempfile, "mkstemp", tracking_mkstemp)
+    monkeypatch.setattr(os, "close", close_staged_then_fail)
     rc = main(["--state", str(state_path), "replay-crucible", str(template_path),
                "--out", str(pack_path)])
 
     captured = capsys.readouterr()
+    monkeypatch.setattr(os, "close", real_close)
     assert rc != 0
     assert "simulated staged close failure" in captured.err
     assert "Traceback" not in captured.err
@@ -635,6 +652,489 @@ def test_cli_names_incompatible_read_only_schema_without_mutation(
     assert "Traceback" not in captured.err
     assert not output_path.exists()
     assert hashlib.sha256(state_path.read_bytes()).hexdigest() == state_sha_before
+
+
+def _directory_receipt(path: Path) -> dict[str, tuple[int, int, str]]:
+    return {
+        item.name: (
+            item.stat().st_size,
+            item.stat().st_mtime_ns,
+            hashlib.sha256(item.read_bytes()).hexdigest(),
+        )
+        for item in sorted(path.iterdir())
+        if item.is_file()
+    }
+
+
+def test_cli_rejects_live_wal_state_without_touching_any_database_file(
+        tmp_path, capsys):
+    state_path = tmp_path / "mneme.db"
+    memory = _state(state_path)
+    template = _template(memory)
+    template_path = tmp_path / "template.json"
+    template_path.write_text(json.dumps(template), encoding="utf-8")
+    assert memory.store.conn.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+    memory.store.add_turn("wal-sentinel", "qcr", "user", "live WAL bytes")
+    assert Path(f"{state_path}-wal").exists()
+    assert Path(f"{state_path}-shm").exists()
+    before = _directory_receipt(tmp_path)
+    output_path = tmp_path / "pack.json"
+
+    rc = main(["--state", str(state_path), "replay-crucible", str(template_path),
+               "--out", str(output_path)])
+
+    captured = capsys.readouterr()
+    after = _directory_receipt(tmp_path)
+    assert rc != 0
+    assert "quiescent snapshot" in captured.err
+    assert "Traceback" not in captured.err
+    assert before == after
+    assert not output_path.exists()
+    memory.close()
+
+
+@pytest.mark.parametrize("output_name", [
+    "mneme.db",
+    "mneme.db-wal",
+    "mneme.db-shm",
+    "mneme.db-journal",
+])
+def test_cli_rejects_state_and_sqlite_sidecar_output_aliases(
+        tmp_path, capsys, output_name):
+    state_path = tmp_path / "mneme.db"
+    memory = _state(state_path)
+    template = _template(memory)
+    template_path = tmp_path / "template.json"
+    template_path.write_text(json.dumps(template), encoding="utf-8")
+    memory.close()
+    before = _directory_receipt(tmp_path)
+    output_path = tmp_path / output_name
+
+    rc = main(["--state", str(state_path), "replay-crucible", str(template_path),
+               "--out", str(output_path)])
+
+    captured = capsys.readouterr()
+    assert rc != 0
+    assert "reserved SQLite state path" in captured.err
+    assert "Traceback" not in captured.err
+    assert _directory_receipt(tmp_path) == before
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Win32 aliases are Windows-only")
+@pytest.mark.parametrize("output_name", [
+    "MNEME.DB-WAL",
+    "mneme.db-wal.",
+    "mneme.db-wal ",
+    "mneme.db-wal:stream",
+])
+def test_cli_rejects_windows_sqlite_sidecar_output_aliases(
+        tmp_path, capsys, output_name):
+    state_path = tmp_path / "mneme.db"
+    memory = _state(state_path)
+    template = _template(memory)
+    template_path = tmp_path / "template.json"
+    template_path.write_text(json.dumps(template), encoding="utf-8")
+    memory.close()
+
+    rc = main(["--state", str(state_path), "replay-crucible", str(template_path),
+               "--out", str(tmp_path / output_name)])
+
+    captured = capsys.readouterr()
+    assert rc != 0
+    # Two distinct mechanisms guard this, and the message must name the right
+    # one. A casefolded spelling resolves onto the reserved name; a trailing
+    # dot, trailing space, or stream separator does not resolve there at all,
+    # it is normalized there by Win32. Sharing one message asserts something
+    # untrue about whichever path did not apply.
+    win32_normalized = output_name.endswith((".", " ")) or ":" in output_name
+    if win32_normalized:
+        assert "normalizes onto a different file" in captured.err
+    else:
+        assert "resolves to a reserved SQLite state path" in captured.err
+    assert "Traceback" not in captured.err
+    assert not (tmp_path / output_name).exists()
+
+
+@pytest.mark.parametrize("relative_out", [
+    "pack.json",
+    "./pack.json",
+    os.path.join(".", "pack.json"),
+    os.path.join("sub", "..", "pack.json"),
+])
+def test_cli_accepts_ordinary_relative_output_paths(
+        tmp_path, capsys, monkeypatch, relative_out):
+    """A '.' or '..' component is ordinary path syntax, not a Win32 alias.
+
+    `pack.json` and `./pack.json` resolve to the identical absolute path, so
+    rejecting one while accepting the other is incoherent. PowerShell tab
+    completion emits `.\\name`, and os.path.relpath() routinely returns '..'.
+    """
+    state_path = tmp_path / "mneme.db"
+    memory = _state(state_path)
+    template = _template(memory)
+    template_path = tmp_path / "template.json"
+    template_path.write_text(json.dumps(template), encoding="utf-8")
+    memory.close()
+    (tmp_path / "sub").mkdir(exist_ok=True)
+    monkeypatch.chdir(tmp_path)
+
+    rc = main(["--state", str(state_path), "replay-crucible", str(template_path),
+               "--out", relative_out])
+
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+    assert "reserved SQLite state path" not in captured.err
+    assert Path(relative_out).resolve() == (tmp_path / "pack.json").resolve()
+    assert (tmp_path / "pack.json").exists()
+
+
+def test_cli_still_refuses_win32_sidecar_aliases_that_use_dot_components(
+        tmp_path, capsys, monkeypatch):
+    """Relaxing '.' and '..' must not reopen the sidecar-alias hole."""
+    state_path = tmp_path / "mneme.db"
+    memory = _state(state_path)
+    template = _template(memory)
+    template_path = tmp_path / "template.json"
+    template_path.write_text(json.dumps(template), encoding="utf-8")
+    memory.close()
+    monkeypatch.chdir(tmp_path)
+
+    rc = main(["--state", str(state_path), "replay-crucible", str(template_path),
+               "--out", os.path.join(".", "mneme.db-wal")])
+
+    captured = capsys.readouterr()
+    assert rc != 0
+    assert "reserved SQLite state path" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_private_snapshot_leaves_no_temp_file_when_staging_fails(
+        tmp_path, monkeypatch):
+    """The temp file is owned from the moment it exists, not from the try block.
+
+    mkstemp() creates the file; if anything between creation and the guarded
+    body raises, that file is orphaned in the system temp directory.
+    """
+    state_path = tmp_path / "mneme.db"
+    memory = _state(state_path)
+    memory.close()
+    snapshot_dir = tmp_path / "tmp"
+    snapshot_dir.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(snapshot_dir))
+
+    real_close = os.close
+    failed = False
+
+    def close_then_fail(fd):
+        nonlocal failed
+        if not failed:
+            failed = True
+            real_close(fd)
+            raise OSError("simulated staged close failure")
+        return real_close(fd)
+
+    monkeypatch.setattr(os, "close", close_then_fail)
+
+    with pytest.raises(OSError, match="simulated staged close failure"):
+        AgentMemory(state_path, read_only=True, immutable_snapshot=True)
+
+    monkeypatch.setattr(os, "close", real_close)
+    assert list(snapshot_dir.glob("mneme-replay-*")) == []
+
+
+def test_full_replay_leaves_no_private_snapshot_behind(tmp_path, capsys, monkeypatch):
+    """A successful replay must own and remove every file it created."""
+    state_path = tmp_path / "mneme.db"
+    memory = _state(state_path)
+    template = _template(memory)
+    template_path = tmp_path / "template.json"
+    template_path.write_text(json.dumps(template), encoding="utf-8")
+    memory.close()
+    snapshot_dir = tmp_path / "tmp"
+    snapshot_dir.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(snapshot_dir))
+
+    rc = main(["--state", str(state_path), "replay-crucible", str(template_path),
+               "--out", str(tmp_path / "pack.json")])
+
+    assert rc == 0, capsys.readouterr().err
+    assert list(snapshot_dir.glob("mneme-replay-*")) == []
+
+
+def test_cli_reserves_casefolded_sidecar_spelling_portably(tmp_path, capsys):
+    state_path = tmp_path / "mneme.db"
+    memory = _state(state_path)
+    template = _template(memory)
+    template_path = tmp_path / "template.json"
+    template_path.write_text(json.dumps(template), encoding="utf-8")
+    memory.close()
+    output_path = tmp_path / "MNEME.DB-WAL"
+
+    rc = main(["--state", str(state_path), "replay-crucible", str(template_path),
+               "--out", str(output_path)])
+
+    captured = capsys.readouterr()
+    assert rc != 0
+    assert "reserved SQLite state path" in captured.err
+    assert not output_path.exists()
+
+
+def test_cli_rejects_memory_state_without_traceback(tmp_path, capsys):
+    template_path = tmp_path / "template.json"
+    template_path.write_text("{}", encoding="utf-8")
+    output_path = tmp_path / "pack.json"
+
+    rc = main(["--state", ":memory:", "replay-crucible", str(template_path),
+               "--out", str(output_path)])
+
+    captured = capsys.readouterr()
+    assert rc != 0
+    assert "filesystem snapshot" in captured.err
+    assert "Traceback" not in captured.err
+    assert not output_path.exists()
+
+
+def test_library_replay_requires_an_immutable_read_only_instance(tmp_path):
+    state_path = tmp_path / "mneme.db"
+    memory = _state(state_path)
+    template = _template(memory)
+
+    with pytest.raises(ValueError, match="read_only=True"):
+        memory.replay_crucible(template)
+    memory.close()
+
+    ordinary_reader = AgentMemory(state_path, read_only=True)
+    with pytest.raises(ValueError, match="immutable_snapshot=True"):
+        ordinary_reader.replay_crucible(template)
+    ordinary_reader.close()
+
+
+def test_generic_read_only_store_still_accepts_a_live_wal_database(tmp_path):
+    state_path = tmp_path / "mneme.db"
+    writer = _state(state_path)
+    assert writer.store.conn.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+    writer.store.add_turn("wal-sentinel", "qcr", "user", "live WAL bytes")
+
+    reader = AgentMemory(state_path, read_only=True)
+
+    assert reader.store.turn("wal-sentinel")["text"] == "live WAL bytes"
+    reader.close()
+    writer.close()
+
+
+def test_immutable_replay_snapshot_rejects_a_live_wal_hardlink(tmp_path):
+    state_path = tmp_path / "mneme.db"
+    writer = _state(state_path)
+    assert writer.store.conn.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+    writer.store.add_turn("wal-sentinel", "qcr", "user", "live WAL bytes")
+    alias_path = tmp_path / "snapshot.db"
+    os.link(state_path, alias_path)
+    assert not Path(f"{alias_path}-wal").exists()
+
+    with pytest.raises(sqlite3.DatabaseError, match="single-link|hardlink"):
+        AgentMemory(
+            alias_path,
+            read_only=True,
+            immutable_snapshot=True,
+        )
+
+    writer.close()
+
+
+def test_immutable_replay_uses_a_private_snapshot_during_a_source_write(
+        tmp_path, monkeypatch):
+    import mneme.replay as replay_module
+
+    state_path = tmp_path / "mneme.db"
+    writer = _state(state_path)
+    template = _template(writer)
+    writer.close()
+    replay_memory = AgentMemory(
+        state_path,
+        read_only=True,
+        immutable_snapshot=True,
+    )
+    private_path = replay_memory.store.private_snapshot_path
+    assert private_path is not None
+    assert private_path != state_path.resolve()
+    assert private_path.is_file()
+
+    replay_started = threading.Event()
+    source_changed = threading.Event()
+    writer_errors: list[BaseException] = []
+    original_replay = replay_module.replay_crucible
+
+    def delayed_replay(store, value):
+        replay_started.set()
+        assert source_changed.wait(5), "concurrent source writer did not finish"
+        return original_replay(store, value)
+
+    def change_source():
+        try:
+            assert replay_started.wait(5), "replay did not reach the handoff"
+            source = sqlite3.connect(state_path)
+            source.execute(
+                "UPDATE turns SET text=? WHERE id=?",
+                ("changed during replay", "turn-1"),
+            )
+            source.commit()
+            source.close()
+        except BaseException as exc:  # surfaced on the test thread below
+            writer_errors.append(exc)
+        finally:
+            source_changed.set()
+
+    monkeypatch.setattr(replay_module, "replay_crucible", delayed_replay)
+    writer = threading.Thread(target=change_source)
+    writer.start()
+
+    pack = replay_memory.replay_crucible(template)
+
+    writer.join(timeout=5)
+    assert not writer.is_alive()
+    assert writer_errors == []
+    assert {row["mneme_verdict"] for row in pack["replays"]} == {"MATCH"}
+    replay_memory.close()
+    assert not private_path.exists()
+
+
+def test_abandoned_immutable_reader_cleans_its_private_snapshot(tmp_path):
+    state_path = tmp_path / "mneme.db"
+    writer = _state(state_path)
+    writer.close()
+    replay_memory = AgentMemory(
+        state_path,
+        read_only=True,
+        immutable_snapshot=True,
+    )
+    private_path = replay_memory.store.private_snapshot_path
+    assert private_path is not None and private_path.is_file()
+
+    del replay_memory
+    gc.collect()
+
+    assert not private_path.exists()
+
+
+def test_agent_memory_initialization_failure_cleans_private_snapshot(
+        tmp_path, monkeypatch):
+    import mneme.store as store_module
+
+    state_path = tmp_path / "mneme.db"
+    writer = _state(state_path)
+    writer.close()
+    monkeypatch.setattr(store_module.tempfile, "tempdir", str(tmp_path))
+
+    with pytest.raises(ValueError):
+        AgentMemory(
+            state_path,
+            read_only=True,
+            immutable_snapshot=True,
+            embed="invalid",
+        )
+
+    assert list(tmp_path.glob("mneme-replay-*.db*")) == []
+
+
+def test_private_snapshot_deadline_includes_source_fingerprinting(
+        tmp_path, monkeypatch):
+    import mneme.store as store_module
+
+    state_path = tmp_path / "mneme.db"
+    writer = _state(state_path)
+    writer.close()
+    ticks = iter((0.0, 11.0))
+    monkeypatch.setattr(
+        store_module.time,
+        "monotonic",
+        lambda: next(ticks, 11.0),
+    )
+    monkeypatch.setattr(store_module.tempfile, "tempdir", str(tmp_path))
+
+    with pytest.raises(sqlite3.DatabaseError, match="timed out"):
+        AgentMemory(
+            state_path,
+            read_only=True,
+            immutable_snapshot=True,
+        )
+
+    assert list(tmp_path.glob("mneme-replay-*.db*")) == []
+
+
+def test_source_change_during_private_snapshot_handoff_fails_and_cleans(
+        tmp_path, monkeypatch, capsys):
+    import mneme.store as store_module
+
+    state_path = tmp_path / "mneme.db"
+    memory = _state(state_path)
+    template = _template(memory)
+    memory.close()
+    template_path = tmp_path / "template.json"
+    template_path.write_text(json.dumps(template), encoding="utf-8")
+    output_path = tmp_path / "pack.json"
+    original_fingerprint = store_module._snapshot_fingerprint
+    calls = 0
+
+    def fingerprint_then_change(path, *args, **kwargs):
+        nonlocal calls
+        fingerprint = original_fingerprint(path, *args, **kwargs)
+        calls += 1
+        if calls == 1:
+            source = sqlite3.connect(path)
+            source.execute(
+                "UPDATE turns SET text=? WHERE id=?",
+                ("changed during snapshot handoff", "turn-1"),
+            )
+            source.commit()
+            source.close()
+        return fingerprint
+
+    monkeypatch.setattr(store_module, "_snapshot_fingerprint", fingerprint_then_change)
+    monkeypatch.setattr(store_module.tempfile, "tempdir", str(tmp_path))
+
+    rc = main(["--state", str(state_path), "replay-crucible", str(template_path),
+               "--out", str(output_path)])
+
+    captured = capsys.readouterr()
+    assert rc != 0
+    assert "source changed while its private snapshot was created" in captured.err
+    assert not output_path.exists()
+    assert list(tmp_path.glob("mneme-replay-*.db*")) == []
+
+
+def test_cleanup_failure_warns_without_retracting_published_pack(
+        tmp_path, monkeypatch, capsys):
+    import mneme.store as store_module
+
+    state_path = tmp_path / "mneme.db"
+    memory = _state(state_path)
+    template = _template(memory)
+    memory.close()
+    template_path = tmp_path / "template.json"
+    template_path.write_text(json.dumps(template), encoding="utf-8")
+    output_path = tmp_path / "pack.json"
+    monkeypatch.setattr(store_module.tempfile, "tempdir", str(tmp_path))
+    original_unlink = Path.unlink
+
+    def fail_private_unlink(path, *args, **kwargs):
+        if path.name.startswith("mneme-replay-"):
+            raise OSError("injected cleanup failure")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_private_unlink)
+
+    rc = main(["--state", str(state_path), "replay-crucible", str(template_path),
+               "--out", str(output_path)])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert output_path.is_file()
+    assert "warning: private replay cleanup incomplete" in captured.err
+    leaked = list(tmp_path.glob("mneme-replay-*.db*"))
+    assert leaked
+    monkeypatch.setattr(Path, "unlink", original_unlink)
+    for path in leaked:
+        path.unlink()
 
 
 @pytest.mark.parametrize("duplicate", ["schema", "replay_binding"])

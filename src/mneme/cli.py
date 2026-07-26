@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import ntpath
 import os
 import sqlite3
 import sys
@@ -12,6 +13,7 @@ from pathlib import Path
 
 from . import __version__
 from .memory import AgentMemory
+from .store import SQLITE_SIDECAR_SUFFIXES, quiescent_snapshot_path
 
 _WINDOWS = os.name == "nt"
 
@@ -27,6 +29,47 @@ def _unique_json_object(pairs: list[tuple[str, object]]) -> dict:
             raise DuplicateJsonKeyError(f"duplicate JSON key {key!r}")
         value[key] = item
     return value
+
+
+def _path_key(path: Path) -> str:
+    """Portable conservative key for SQLite's reserved sidecar namespace."""
+    return str(path.resolve(strict=False)).casefold()
+
+
+def _validate_replay_paths(
+        state: str | Path, output: str | Path) -> tuple[Path, Path]:
+    snapshot = quiescent_snapshot_path(state)
+    raw_output = os.fspath(output)
+    if _WINDOWS:
+        _drive, tail = ntpath.splitdrive(raw_output)
+        components = tail.replace("/", "\\").split("\\")
+        # "." and ".." are ordinary relative-path syntax, not Win32 aliases:
+        # `pack.json` and `.\pack.json` resolve to the same absolute path, and
+        # os.path.relpath() output routinely starts with "..". Only a *name*
+        # that ends in a dot or space, or carries a stream separator, can be
+        # normalized by Win32 onto a different file than it spells.
+        if any(
+            (component not in (".", "..") and component.endswith((".", " ")))
+            or ":" in component
+            for component in components
+            if component
+        ):
+            raise ValueError(
+                "output spells a Win32 path that normalizes onto a different "
+                "file than it names; rename it without a trailing dot, "
+                "trailing space, or ':' stream separator"
+            )
+    canonical_output = Path(output).expanduser().resolve(strict=False)
+    reserved = {_path_key(snapshot)}
+    reserved.update(
+        _path_key(Path(f"{snapshot}{suffix}"))
+        for suffix in SQLITE_SIDECAR_SUFFIXES
+    )
+    if _path_key(canonical_output) in reserved:
+        raise ValueError(
+            "output resolves to a reserved SQLite state path or sidecar"
+        )
+    return snapshot, canonical_output
 
 
 def _remove_temporary(path: Path) -> OSError | None:
@@ -264,6 +307,11 @@ def build_parser() -> argparse.ArgumentParser:
     replay = sub.add_parser(
         "replay-crucible",
         help="re-run an assessment-bound Crucible template against Mneme state",
+        description=(
+            "Replay against a caller-owned, quiescent rollback-journal snapshot. "
+            "Mneme first creates a process-owned SQLite backup and then reads "
+            "that private copy immutably."
+        ),
     )
     replay.add_argument("template", help="Crucible replay template JSON")
     replay.add_argument("--out", required=True, help="new replay-pack JSON path")
@@ -353,6 +401,7 @@ def cmd_replay_crucible(args) -> int:
 
     memory = None
     try:
+        state, output = _validate_replay_paths(args.state, args.out)
         try:
             template_text = Path(args.template).read_text(encoding="utf-8")
         except UnicodeError:
@@ -362,7 +411,11 @@ def cmd_replay_crucible(args) -> int:
             )
             return 1
         template = json.loads(template_text, object_pairs_hook=_unique_json_object)
-        memory = AgentMemory(args.state, read_only=True)
+        memory = AgentMemory(
+            state,
+            read_only=True,
+            immutable_snapshot=True,
+        )
         pack = replay_crucible(memory.store, template)
         try:
             payload = (
@@ -374,7 +427,6 @@ def cmd_replay_crucible(args) -> int:
                 file=sys.stderr,
             )
             return 1
-        output = Path(args.out)
         publication_warning = _publish_new_file(output, payload)
         print(f"wrote Crucible replay pack to {output}")
         if publication_warning is not None:
@@ -384,12 +436,14 @@ def cmd_replay_crucible(args) -> int:
         print(f"replay-crucible failed: output already exists: {args.out}", file=sys.stderr)
         return 1
     except (OSError, sqlite3.Error, json.JSONDecodeError, DuplicateJsonKeyError,
-            ReplayBindingError) as exc:
+            ReplayBindingError, ValueError) as exc:
         print(f"replay-crucible failed: {exc}", file=sys.stderr)
         return 1
     finally:
         if memory is not None:
-            memory.close()
+            cleanup_warning = memory.close()
+            if cleanup_warning is not None:
+                print(f"warning: {cleanup_warning}", file=sys.stderr)
 
 
 def cmd_inspect(args) -> int:
