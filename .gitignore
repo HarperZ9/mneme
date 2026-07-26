@@ -25,3 +25,6 @@ Thumbs.db
 
 # Local-only Claude instructions (global standard: never commit)
 CLAUDE.local.md
+
+# The committed template must survive the .env.* rule above (global standard)
+!.env.example
