@@ -122,7 +122,7 @@ Crucible or embedding a database path or executable command in the descriptor:
 
 ```bash
 crucible recheck REGISTRY --template replay-template.json
-python -c "import sqlite3; s=sqlite3.connect('mneme.db'); d=sqlite3.connect('mneme-replay-snapshot.db'); s.backup(d); d.execute('PRAGMA journal_mode=DELETE'); d.close(); s.close()"
+python -c "import sqlite3; s=sqlite3.connect('file:mneme.db?mode=ro', uri=True); d=sqlite3.connect('mneme-replay-snapshot.db'); s.backup(d); d.execute('PRAGMA journal_mode=DELETE'); d.close(); s.close()"
 mneme --state mneme-replay-snapshot.db replay-crucible replay-template.json --out replay-pack.json
 crucible recheck REGISTRY --pack replay-pack.json --json
 ```
@@ -131,15 +131,20 @@ The replay command fails closed when the assessment triple, claim binding,
 descriptor, original measurement contract, or target memory grounding differs.
 Ordinary source drift remains a replay result (`1.0`); a missing source remains
 unverifiable (`null`). Crucible still does not independently re-read Mneme's
-source—the source recheck is Mneme-owned and Crucible verifies that the replayed
-measurement exactly reproduces its sealed contract.
+source. The source recheck is Mneme-owned, and Crucible verifies that the
+replayed measurement exactly reproduces its sealed contract.
 
 The command consumes `crucible.replay-template/1` from a caller-owned,
 quiescent, single-link rollback-journal snapshot. The example uses SQLite's
 backup API to materialize one; keep that file unchanged until replay returns.
-Snapshot creation uses SQLite's normal locking and may coordinate through a
-live source's WAL/SHM files. Stop source writers first when even coordination
-sidecar changes are unacceptable.
+
+Open the source read-only when you take that snapshot, exactly as the example
+does. A read-write handle on a WAL database whose writer exited without a clean
+close will recover and checkpoint it: measured on Windows, that rewrote the main
+file and deleted both sidecars. The read-only handle leaves the main file and
+the WAL byte-identical. It can still update the `-shm` index, because SQLite
+readers coordinate through shared memory. Stop source writers first when even
+that is unacceptable.
 
 Replay refuses WAL, SHM, or journal sidecars and hardlink aliases, fingerprints
 the source around a consistent private SQLite backup, and reads only that

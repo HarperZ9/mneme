@@ -43,14 +43,21 @@ def _validate_replay_paths(
     if _WINDOWS:
         _drive, tail = ntpath.splitdrive(raw_output)
         components = tail.replace("/", "\\").split("\\")
+        # "." and ".." are ordinary relative-path syntax, not Win32 aliases:
+        # `pack.json` and `.\pack.json` resolve to the same absolute path, and
+        # os.path.relpath() output routinely starts with "..". Only a *name*
+        # that ends in a dot or space, or carries a stream separator, can be
+        # normalized by Win32 onto a different file than it spells.
         if any(
-            component.endswith((".", " ")) or ":" in component
+            (component not in (".", "..") and component.endswith((".", " ")))
+            or ":" in component
             for component in components
             if component
         ):
             raise ValueError(
-                "output resolves to a reserved SQLite state path or sidecar "
-                "under Win32 path normalization"
+                "output spells a Win32 path that normalizes onto a different "
+                "file than it names; rename it without a trailing dot, "
+                "trailing space, or ':' stream separator"
             )
     canonical_output = Path(output).expanduser().resolve(strict=False)
     reserved = {_path_key(snapshot)}

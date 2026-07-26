@@ -60,7 +60,16 @@ a re-derivable benchmark, and accountable forgetting.
   `read_only=True, immutable_snapshot=True`; ordinary `read_only=True` behavior
   remains available separately. Schema-less
   historical templates retain the complete measurement-seal fallback only when
-  no replay binding is present.
+  no replay binding is present. The documented snapshot recipe opens the source
+  read-only: a read-write handle on a WAL database with an unclean shutdown
+  recovers and checkpoints it, which rewrites the main file and removes both
+  sidecars. Taking the snapshot read-only leaves the main file and the WAL
+  byte-identical; the `-shm` index can still change, because SQLite readers
+  coordinate through shared memory.
+  An output path is refused for one of two named reasons, never a shared one:
+  it resolves onto the state file or a sidecar, or Win32 normalizes it onto a
+  different file than it spells. Ordinary `.` and `..` path components are not
+  Win32 aliases and are accepted.
 - **White-box inspector** — a self-contained HTML view of every layer with
   provenance, drift, and the audit log (`mneme inspect`).
 - **MCP server** — 6 tools over stdio; **runnable tour** (`examples/tour.py`).
