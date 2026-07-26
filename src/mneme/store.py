@@ -104,10 +104,12 @@ def _private_replay_snapshot(source_path: Path) -> Path:
     source_path = quiescent_snapshot_path(source_path)
     before = _snapshot_fingerprint(source_path, deadline=deadline)
     fd, name = tempfile.mkstemp(prefix="mneme-replay-", suffix=".db")
-    os.close(fd)
     private_path = Path(name)
     source = destination = None
+    # mkstemp() has already created the file, so ownership starts here. Closing
+    # the descriptor inside the guard keeps a failure from orphaning it.
     try:
+        os.close(fd)
         def bounded_progress(_status: int, _remaining: int, _total: int) -> None:
             _check_snapshot_deadline(deadline)
 

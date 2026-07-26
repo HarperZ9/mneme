@@ -7,6 +7,7 @@ import json
 import os
 import sqlite3
 import sys
+import tempfile
 import threading
 from copy import deepcopy
 from pathlib import Path
@@ -507,21 +508,32 @@ def test_cli_cleans_temp_when_staged_file_close_fails(tmp_path, capsys, monkeypa
     pack_path = tmp_path / "pack.json"
 
     real_close = os.close
-    failed = False
+    staged_fds: set[int] = set()
 
-    def close_then_fail(fd):
-        nonlocal failed
-        if not failed:
-            failed = True
+    def close_staged_then_fail(fd):
+        # Only fail for the descriptor the atomic publisher staged. A bare
+        # "fail the first os.close" patch fires inside Store.__init__ instead,
+        # so it never exercises _publish_new_file at all.
+        if fd in staged_fds:
+            staged_fds.discard(fd)
             real_close(fd)
             raise OSError("simulated staged close failure")
         return real_close(fd)
 
-    monkeypatch.setattr(os, "close", close_then_fail)
+    real_mkstemp = cli_module.tempfile.mkstemp
+
+    def tracking_mkstemp(*args, **kwargs):
+        fd, name = real_mkstemp(*args, **kwargs)
+        staged_fds.add(fd)
+        return fd, name
+
+    monkeypatch.setattr(cli_module.tempfile, "mkstemp", tracking_mkstemp)
+    monkeypatch.setattr(os, "close", close_staged_then_fail)
     rc = main(["--state", str(state_path), "replay-crucible", str(template_path),
                "--out", str(pack_path)])
 
     captured = capsys.readouterr()
+    monkeypatch.setattr(os, "close", real_close)
     assert rc != 0
     assert "simulated staged close failure" in captured.err
     assert "Traceback" not in captured.err
@@ -729,8 +741,124 @@ def test_cli_rejects_windows_sqlite_sidecar_output_aliases(
 
     captured = capsys.readouterr()
     assert rc != 0
+    # Two distinct mechanisms guard this, and the message must name the right
+    # one. A casefolded spelling resolves onto the reserved name; a trailing
+    # dot, trailing space, or stream separator does not resolve there at all,
+    # it is normalized there by Win32. Sharing one message asserts something
+    # untrue about whichever path did not apply.
+    win32_normalized = output_name.endswith((".", " ")) or ":" in output_name
+    if win32_normalized:
+        assert "normalizes onto a different file" in captured.err
+    else:
+        assert "resolves to a reserved SQLite state path" in captured.err
+    assert "Traceback" not in captured.err
+    assert not (tmp_path / output_name).exists()
+
+
+@pytest.mark.parametrize("relative_out", [
+    "pack.json",
+    "./pack.json",
+    os.path.join(".", "pack.json"),
+    os.path.join("sub", "..", "pack.json"),
+])
+def test_cli_accepts_ordinary_relative_output_paths(
+        tmp_path, capsys, monkeypatch, relative_out):
+    """A '.' or '..' component is ordinary path syntax, not a Win32 alias.
+
+    `pack.json` and `./pack.json` resolve to the identical absolute path, so
+    rejecting one while accepting the other is incoherent. PowerShell tab
+    completion emits `.\\name`, and os.path.relpath() routinely returns '..'.
+    """
+    state_path = tmp_path / "mneme.db"
+    memory = _state(state_path)
+    template = _template(memory)
+    template_path = tmp_path / "template.json"
+    template_path.write_text(json.dumps(template), encoding="utf-8")
+    memory.close()
+    (tmp_path / "sub").mkdir(exist_ok=True)
+    monkeypatch.chdir(tmp_path)
+
+    rc = main(["--state", str(state_path), "replay-crucible", str(template_path),
+               "--out", relative_out])
+
+    captured = capsys.readouterr()
+    assert rc == 0, captured.err
+    assert "reserved SQLite state path" not in captured.err
+    assert Path(relative_out).resolve() == (tmp_path / "pack.json").resolve()
+    assert (tmp_path / "pack.json").exists()
+
+
+def test_cli_still_refuses_win32_sidecar_aliases_that_use_dot_components(
+        tmp_path, capsys, monkeypatch):
+    """Relaxing '.' and '..' must not reopen the sidecar-alias hole."""
+    state_path = tmp_path / "mneme.db"
+    memory = _state(state_path)
+    template = _template(memory)
+    template_path = tmp_path / "template.json"
+    template_path.write_text(json.dumps(template), encoding="utf-8")
+    memory.close()
+    monkeypatch.chdir(tmp_path)
+
+    rc = main(["--state", str(state_path), "replay-crucible", str(template_path),
+               "--out", os.path.join(".", "mneme.db-wal")])
+
+    captured = capsys.readouterr()
+    assert rc != 0
     assert "reserved SQLite state path" in captured.err
     assert "Traceback" not in captured.err
+
+
+def test_private_snapshot_leaves_no_temp_file_when_staging_fails(
+        tmp_path, monkeypatch):
+    """The temp file is owned from the moment it exists, not from the try block.
+
+    mkstemp() creates the file; if anything between creation and the guarded
+    body raises, that file is orphaned in the system temp directory.
+    """
+    state_path = tmp_path / "mneme.db"
+    memory = _state(state_path)
+    memory.close()
+    snapshot_dir = tmp_path / "tmp"
+    snapshot_dir.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(snapshot_dir))
+
+    real_close = os.close
+    failed = False
+
+    def close_then_fail(fd):
+        nonlocal failed
+        if not failed:
+            failed = True
+            real_close(fd)
+            raise OSError("simulated staged close failure")
+        return real_close(fd)
+
+    monkeypatch.setattr(os, "close", close_then_fail)
+
+    with pytest.raises(OSError, match="simulated staged close failure"):
+        AgentMemory(state_path, read_only=True, immutable_snapshot=True)
+
+    monkeypatch.setattr(os, "close", real_close)
+    assert list(snapshot_dir.glob("mneme-replay-*")) == []
+
+
+def test_full_replay_leaves_no_private_snapshot_behind(tmp_path, capsys, monkeypatch):
+    """A successful replay must own and remove every file it created."""
+    state_path = tmp_path / "mneme.db"
+    memory = _state(state_path)
+    template = _template(memory)
+    template_path = tmp_path / "template.json"
+    template_path.write_text(json.dumps(template), encoding="utf-8")
+    memory.close()
+    snapshot_dir = tmp_path / "tmp"
+    snapshot_dir.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(snapshot_dir))
+
+    rc = main(["--state", str(state_path), "replay-crucible", str(template_path),
+               "--out", str(tmp_path / "pack.json")])
+
+    assert rc == 0, capsys.readouterr().err
+    assert list(snapshot_dir.glob("mneme-replay-*")) == []
 
 
 def test_cli_reserves_casefolded_sidecar_spelling_portably(tmp_path, capsys):
