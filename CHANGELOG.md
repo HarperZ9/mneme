@@ -45,13 +45,22 @@ a re-derivable benchmark, and accountable forgetting.
 - **Strict replay provenance** — one decoder validates source-id lists and
   source-hash maps across drift, descriptor, and replay paths, closing JSON shape
   confusion such as `"ab"` versus `["a", "b"]`.
-- **Non-mutating mixed replay** — `replay-crucible` opens state read-only,
-  consumes `crucible.replay-template/1`, verifies and preserves a compact
-  `crucible.replay-set/1` descriptor binding without descriptorless assessment
-  rows, and atomically emits `crucible.replay-pack/1` without overwrite; invalid
-  UTF-8 and incompatible read-only schemas are named CLI errors rather than
-  tracebacks. Schema-less historical templates retain the complete measurement-
-  seal fallback only when no replay binding is present.
+- **Immutable-snapshot mixed replay** — `replay-crucible` requires a
+  caller-owned, quiescent, single-link rollback-journal snapshot without SQLite
+  sidecars. It fingerprints that source around a consistent process-owned
+  SQLite backup, reads only the private copy in immutable mode, consumes
+  `crucible.replay-template/1`, and verifies a compact
+  `crucible.replay-set/1` descriptor binding
+  without descriptorless assessment rows, and atomically emits
+  `crucible.replay-pack/1` without overwrite or an output alias of the database
+  or its sidecars; invalid UTF-8, in-memory state, hardlinks, live sidecars,
+  source changes detected during private-snapshot creation, and incompatible
+  read-only schemas are named CLI errors rather than tracebacks. Later source
+  changes cannot affect the process-owned replay copy. Library callers now use
+  `read_only=True, immutable_snapshot=True`; ordinary `read_only=True` behavior
+  remains available separately. Schema-less
+  historical templates retain the complete measurement-seal fallback only when
+  no replay binding is present.
 - **White-box inspector** — a self-contained HTML view of every layer with
   provenance, drift, and the audit log (`mneme inspect`).
 - **MCP server** — 6 tools over stdio; **runnable tour** (`examples/tour.py`).

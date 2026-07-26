@@ -28,13 +28,20 @@ class AgentMemory:
     def __init__(self, path: str | Path = ":memory:", *,
                  extractor: Extractor | None = None,
                  embedder: Embedder | None = None,
-                 embed=None, read_only: bool = False):
+                 embed=None, read_only: bool = False,
+                 immutable_snapshot: bool = False):
         from .embed import resolve_embedder
-        self.store = Store(path, read_only=read_only)
-        self.extractor = extractor or RuleExtractor()
+        resolved_extractor = extractor or RuleExtractor()
+        resolved_embedder = embedder or resolve_embedder(embed)
+        self.store = Store(
+            path,
+            read_only=read_only,
+            immutable_snapshot=immutable_snapshot,
+        )
+        self.extractor = resolved_extractor
         # `embed="ngram"` turns on the zero-dep local vector channel; `embedder=`
         # takes a real embedding model. embedder wins if both are given.
-        self.embedder = embedder or resolve_embedder(embed)
+        self.embedder = resolved_embedder
 
     # -- ingest --------------------------------------------------------------
     def remember(self, session: str, turns: Sequence[dict], user: str = "") -> dict:
@@ -129,7 +136,16 @@ class AgentMemory:
         return to_crucible_thesis(self, session, layer)
 
     def replay_crucible(self, template: dict) -> dict:
-        """Re-run a decoded Crucible replay template against this state."""
+        """Replay against an instance opened with both safety flags enabled.
+
+        Construct with ``read_only=True, immutable_snapshot=True`` so Store
+        materializes and owns the private SQLite snapshot used for the replay.
+        """
+        if not (self.store.read_only and self.store.immutable_snapshot):
+            raise ValueError(
+                "Crucible replay requires AgentMemory(..., read_only=True, "
+                "immutable_snapshot=True)"
+            )
         from .replay import replay_crucible
         return replay_crucible(self.store, template)
 
@@ -211,5 +227,5 @@ class AgentMemory:
                 "grounded_in": source_ids,
                 "note": "persona cites its source atoms -> it is drift-checkable, not free text"}
 
-    def close(self) -> None:
-        self.store.close()
+    def close(self) -> str | None:
+        return self.store.close()
