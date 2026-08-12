@@ -405,11 +405,17 @@ class Store:
         rows = self.conn.execute('SELECT DISTINCT "user" FROM memories ORDER BY "user"').fetchall()
         return [r["user"] for r in rows]
 
-    def memory(self, memory_id: str) -> sqlite3.Row | None:
-        return self.conn.execute("SELECT * FROM memories WHERE id=?", (memory_id,)).fetchone()
+    def memory(self, memory_id: str, *, user: str | None = None) -> sqlite3.Row | None:
+        if user is None:
+            return self.conn.execute(
+                "SELECT * FROM memories WHERE id=?", (memory_id,)
+            ).fetchone()
+        return self.conn.execute(
+            'SELECT * FROM memories WHERE id=? AND "user"=?', (memory_id, user)
+        ).fetchone()
 
-    def provenance(self, memory_id: str) -> ProvenanceReceipt | None:
-        r = self.memory(memory_id)
+    def provenance(self, memory_id: str, *, user: str | None = None) -> ProvenanceReceipt | None:
+        r = self.memory(memory_id, user=user)
         if r is None:
             return None
         return ProvenanceReceipt(r["id"], r["layer"], tuple(json.loads(r["source_ids"])),
@@ -441,15 +447,20 @@ class Store:
                 "before_sha": before, "after_sha": after, "reason": reason,
                 "entry_sha": entry}
 
-    def forget(self, memory_id: str, reason: str = "") -> dict | None:
+    def forget(self, memory_id: str, reason: str = "", *, user: str | None = None) -> dict | None:
         """Delete a memory, leaving a tombstone receipt (what was forgotten, its
         hash, why). Returns the audit entry, or None if the memory is absent."""
-        row = self.memory(memory_id)
+        row = self.memory(memory_id, user=user)
         if row is None:
             return None
         entry = self._audit("forget", memory_id, row["layer"],
                             row["content_sha256"], "", reason)
-        self.conn.execute("DELETE FROM memories WHERE id=?", (memory_id,))
+        if user is None:
+            self.conn.execute("DELETE FROM memories WHERE id=?", (memory_id,))
+        else:
+            self.conn.execute(
+                'DELETE FROM memories WHERE id=? AND "user"=?', (memory_id, user)
+            )
         self.conn.commit()
         return entry
 

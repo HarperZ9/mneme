@@ -91,9 +91,51 @@ def test_mcp_unknown_tool_is_a_protocol_error():
 def test_mcp_tool_error_rides_the_result_not_the_transport(tmp_path, monkeypatch):
     monkeypatch.setenv("MNEME_STATE", str(tmp_path / "e.db"))
     r = _rpc("tools/call", {"name": "mneme.provenance",
-                            "arguments": {"memory_id": "does-not-exist"}})
+                            "arguments": {"memory_id": "does-not-exist", "user": "tenant"}})
     assert r["result"]["isError"] is True               # not a JSON-RPC error frame
-    assert "no memory" in r["result"]["content"][0]["text"]
+    assert "memory not found" in r["result"]["content"][0]["text"]
+
+
+def test_mcp_object_access_requires_the_memory_owner(tmp_path, monkeypatch):
+    """Removing owner filtering must leak a tenant row through MCP."""
+    state = tmp_path / "tenants.db"
+    monkeypatch.setenv("MNEME_STATE", str(state))
+    memory = AgentMemory(state)
+    memory.store.add_memory("tenant-a-memory", "L1", "tenant A secret", [],
+                            "test", "test", user="tenant-a")
+    memory.store.add_memory("tenant-b-memory", "L1", "tenant B secret", [],
+                            "test", "test", user="tenant-b")
+
+    def call(name, arguments):
+        return _rpc("tools/call", {"name": name, "arguments": arguments})["result"]
+
+    absent = call("mneme.provenance", {
+        "memory_id": "does-not-exist", "user": "tenant-b"})
+    foreign_read = call("mneme.provenance", {
+        "memory_id": "tenant-a-memory", "user": "tenant-b"})
+    assert absent["isError"] is True
+    assert foreign_read["isError"] is True
+    assert foreign_read["content"] == absent["content"]
+
+    missing_user = call("mneme.provenance", {"memory_id": "tenant-a-memory"})
+    assert missing_user["isError"] is True
+    assert "user is required" in missing_user["content"][0]["text"]
+
+    foreign_forget = call("mneme.forget", {
+        "memory_id": "tenant-a-memory", "user": "tenant-b"})
+    assert foreign_forget["isError"] is True
+    assert foreign_forget["content"] == absent["content"]
+    assert AgentMemory(state).store.memory("tenant-a-memory") is not None
+
+    owner_read = call("mneme.provenance", {
+        "memory_id": "tenant-a-memory", "user": "tenant-a"})
+    assert owner_read["isError"] is False
+    assert json.loads(owner_read["content"][0]["text"])["memory_id"] == "tenant-a-memory"
+
+    owner_forget = call("mneme.forget", {
+        "memory_id": "tenant-a-memory", "user": "tenant-a"})
+    assert owner_forget["isError"] is False
+    assert AgentMemory(state).store.memory("tenant-a-memory") is None
 
 
 def test_mcp_notification_without_id_gets_no_response():

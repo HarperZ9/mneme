@@ -69,13 +69,17 @@ def _tool_defs() -> list[dict]:
              "layer": {"type": "string", "description": "L1 (default), L2, L3"}}}},
         {"name": "mneme.provenance",
          "description": "Show a memory's provenance receipt (sources, extractor, hash).",
-         "inputSchema": {"type": "object", "required": ["memory_id"],
-             "properties": {"memory_id": {"type": "string"}}}},
+         "inputSchema": {"type": "object", "required": ["memory_id", "user"],
+             "properties": {"memory_id": {"type": "string"},
+                            "user": {"type": "string",
+                                     "description": "tenant that owns the memory"}}}},
         {"name": "mneme.forget",
          "description": "Delete a memory, leaving an auditable tombstone (what "
                         "was forgotten, its hash, why).",
-         "inputSchema": {"type": "object", "required": ["memory_id"],
+         "inputSchema": {"type": "object", "required": ["memory_id", "user"],
              "properties": {"memory_id": {"type": "string"},
+                            "user": {"type": "string",
+                                     "description": "tenant that owns the memory"},
                             "reason": {"type": "string"}}}},
         {"name": "mneme.audit",
          "description": "The hash-chained history of every forget/update, with a "
@@ -90,6 +94,13 @@ def _reject_unknown(args: dict, allowed: set[str]) -> None:
     extra = set(args) - allowed
     if extra:
         raise ValueError(f"unknown argument(s): {sorted(extra)}; allowed: {sorted(allowed)}")
+
+
+def _required_user(args: dict) -> str:
+    user = args.get("user")
+    if not isinstance(user, str) or not user:
+        raise ValueError("user is required")
+    return user
 
 
 def call_tool(name: str, args: dict) -> str:
@@ -110,14 +121,17 @@ def call_tool(name: str, args: dict) -> str:
     if name == "mneme.drift":
         return json.dumps(mem.drift(layer=args.get("layer", "L1")), indent=2, ensure_ascii=False)
     if name == "mneme.provenance":
-        prov = mem.provenance(str(args["memory_id"]))
+        _reject_unknown(args, {"memory_id", "user"})
+        prov = mem.provenance(str(args["memory_id"]), user=_required_user(args))
         if prov is None:
-            raise ValueError(f"no memory with id {args['memory_id']!r}")
+            raise ValueError("memory not found")
         return json.dumps(prov, indent=2, ensure_ascii=False)
     if name == "mneme.forget":
-        entry = mem.forget(str(args["memory_id"]), reason=str(args.get("reason", "")))
+        _reject_unknown(args, {"memory_id", "reason", "user"})
+        entry = mem.forget(str(args["memory_id"]), reason=str(args.get("reason", "")),
+                           user=_required_user(args))
         if entry is None:
-            raise ValueError(f"no memory with id {args['memory_id']!r}")
+            raise ValueError("memory not found")
         return json.dumps(entry, indent=2, ensure_ascii=False)
     if name == "mneme.audit":
         return json.dumps(mem.audit(), indent=2, ensure_ascii=False)

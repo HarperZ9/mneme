@@ -112,8 +112,8 @@ class AgentMemory:
         """Verdict every memory's grounding against the current store."""
         return drift_report(self.store, layer=layer)
 
-    def provenance(self, memory_id: str) -> dict | None:
-        r = self.store.provenance(memory_id)
+    def provenance(self, memory_id: str, *, user: str | None = None) -> dict | None:
+        r = self.store.provenance(memory_id, user=user)
         return r.as_dict() if r else None
 
     # -- ecosystem composition ----------------------------------------------
@@ -165,10 +165,10 @@ class AgentMemory:
         return entity_graph(self, user=user, session=session)
 
     # -- accountable editing -------------------------------------------------
-    def forget(self, memory_id: str, reason: str = "") -> dict | None:
+    def forget(self, memory_id: str, reason: str = "", *, user: str | None = None) -> dict | None:
         """Delete a memory, leaving a tombstone in the hash-chained audit log:
         forgetting is auditable, not silent. None if the memory is absent."""
-        return self.store.forget(memory_id, reason)
+        return self.store.forget(memory_id, reason, user=user)
 
     def update(self, memory_id: str, new_text: str, reason: str = "") -> dict | None:
         """Edit a memory's text, keeping its provenance and recording the
