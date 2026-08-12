@@ -6,8 +6,9 @@ recall returns its re-derivable RecallReceipt as the tool result, so an agent (o
 its operator) can see and re-check why a memory was surfaced. Zero-dep JSON-RPC
 2.0 over stdio, matching the MCP protocol the sibling flagships speak.
 
-The DB path comes from the MNEME_STATE env var (default mneme.db), so a host
-config points one server at one memory store.
+The DB path comes from the MNEME_STATE env var (default mneme.db). Object
+access derives its tenant from MNEME_TENANT, so a host config binds one MCP
+server to one tenant rather than trusting a tool argument.
 """
 from __future__ import annotations
 
@@ -69,17 +70,13 @@ def _tool_defs() -> list[dict]:
              "layer": {"type": "string", "description": "L1 (default), L2, L3"}}}},
         {"name": "mneme.provenance",
          "description": "Show a memory's provenance receipt (sources, extractor, hash).",
-         "inputSchema": {"type": "object", "required": ["memory_id", "user"],
-             "properties": {"memory_id": {"type": "string"},
-                            "user": {"type": "string",
-                                     "description": "tenant that owns the memory"}}}},
+         "inputSchema": {"type": "object", "required": ["memory_id"],
+             "properties": {"memory_id": {"type": "string"}}}},
         {"name": "mneme.forget",
          "description": "Delete a memory, leaving an auditable tombstone (what "
                         "was forgotten, its hash, why).",
-         "inputSchema": {"type": "object", "required": ["memory_id", "user"],
+         "inputSchema": {"type": "object", "required": ["memory_id"],
              "properties": {"memory_id": {"type": "string"},
-                            "user": {"type": "string",
-                                     "description": "tenant that owns the memory"},
                             "reason": {"type": "string"}}}},
         {"name": "mneme.audit",
          "description": "The hash-chained history of every forget/update, with a "
@@ -96,11 +93,11 @@ def _reject_unknown(args: dict, allowed: set[str]) -> None:
         raise ValueError(f"unknown argument(s): {sorted(extra)}; allowed: {sorted(allowed)}")
 
 
-def _required_user(args: dict) -> str:
-    user = args.get("user")
-    if not isinstance(user, str) or not user:
-        raise ValueError("user is required")
-    return user
+def _configured_tenant() -> str:
+    tenant = os.environ.get("MNEME_TENANT", "")
+    if not tenant:
+        raise ValueError("tenant is not configured")
+    return tenant
 
 
 def call_tool(name: str, args: dict) -> str:
@@ -121,15 +118,15 @@ def call_tool(name: str, args: dict) -> str:
     if name == "mneme.drift":
         return json.dumps(mem.drift(layer=args.get("layer", "L1")), indent=2, ensure_ascii=False)
     if name == "mneme.provenance":
-        _reject_unknown(args, {"memory_id", "user"})
-        prov = mem.provenance(str(args["memory_id"]), user=_required_user(args))
+        _reject_unknown(args, {"memory_id"})
+        prov = mem.provenance(str(args["memory_id"]), user=_configured_tenant())
         if prov is None:
             raise ValueError("memory not found")
         return json.dumps(prov, indent=2, ensure_ascii=False)
     if name == "mneme.forget":
-        _reject_unknown(args, {"memory_id", "reason", "user"})
+        _reject_unknown(args, {"memory_id", "reason"})
         entry = mem.forget(str(args["memory_id"]), reason=str(args.get("reason", "")),
-                           user=_required_user(args))
+                           user=_configured_tenant())
         if entry is None:
             raise ValueError("memory not found")
         return json.dumps(entry, indent=2, ensure_ascii=False)
