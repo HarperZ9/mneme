@@ -13,7 +13,7 @@
 pip install git+https://github.com/HarperZ9/mneme.git
 ```
 
-Zero runtime dependencies · fully local · deterministic · MIT.
+Zero runtime dependencies · fully local · deterministic · fair-source.
 
 ## Why another memory library
 
@@ -247,7 +247,7 @@ cites its atoms, so it is drift-checkable too (a scenario whose atom is gone is
 
 ## License
 
-MIT.
+Mneme is fair-source: open to read, run, and build on, with commercial use reserved so the project can fund its own development. See [LICENSE](LICENSE).
 
 ## What this believes
 

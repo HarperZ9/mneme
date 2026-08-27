@@ -8,12 +8,12 @@ version = "0.2.0"
 description = "Accountable agent memory: 4-tier layered memory + hybrid retrieval, where every memory carries provenance, every recall is re-derivable, and every stale memory flags its own drift. Zero runtime dependencies."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "LicenseRef-FSL-1.1-MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Zain Dana Harper" }]
 keywords = ["agent-memory", "llm-memory", "long-term-memory", "provenance", "retrieval", "bm25", "rag"]
 classifiers = [
     "Programming Language :: Python :: 3.11",
-    "License :: OSI Approved :: MIT License",
     "Intended Audience :: Developers",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
