@@ -81,6 +81,12 @@ def _tool_defs() -> list[dict]:
          "description": "The hash-chained history of every forget/update, with a "
                         "chain-intact verdict.",
          "inputSchema": {"type": "object", "properties": {}}},
+        {"name": "mneme.status",
+         "description": "Liveness and identity of the mneme MCP server (name, version, protocol). Network-free health probe.",
+         "inputSchema": {"type": "object", "properties": {}}},
+        {"name": "mneme.doctor",
+         "description": "Readiness diagnostic: identity plus the configured state-db path and the tools exposed.",
+         "inputSchema": {"type": "object", "properties": {}}},
     ]
 
 
@@ -93,6 +99,13 @@ def _reject_unknown(args: dict, allowed: set[str]) -> None:
 
 
 def call_tool(name: str, args: dict) -> str:
+    if name in ("mneme.status", "mneme.doctor"):
+        info = {"ok": True, "server": "mneme", "version": __version__,
+                "protocol": MCP_PROTOCOL_VERSION}
+        if name == "mneme.doctor":
+            info["state_path"] = _state_path()
+            info["tools"] = [t["name"] for t in _tool_defs()]
+        return json.dumps(info, indent=2, ensure_ascii=False)
     mem = AgentMemory(_state_path())
     if name == "mneme.remember":
         _reject_unknown(args, {"session", "turns", "user"})

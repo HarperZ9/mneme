@@ -66,7 +66,8 @@ def test_mcp_initialize_and_tools_list():
     assert init["result"]["serverInfo"]["name"] == "mneme"
     tools = {t["name"] for t in _rpc("tools/list")["result"]["tools"]}
     assert tools == {"mneme.remember", "mneme.recall", "mneme.drift",
-                     "mneme.provenance", "mneme.forget", "mneme.audit"}
+                     "mneme.provenance", "mneme.forget", "mneme.audit",
+                     "mneme.status", "mneme.doctor"}
 
 
 def test_mcp_remember_then_recall_carries_the_receipt(tmp_path, monkeypatch):
@@ -98,3 +99,12 @@ def test_mcp_tool_error_rides_the_result_not_the_transport(tmp_path, monkeypatch
 
 def test_mcp_notification_without_id_gets_no_response():
     assert handle_request({"jsonrpc": "2.0", "method": "initialized"}) is None
+
+
+def test_status_and_doctor_health_tools():
+    # the Flywheel lane probe marks mneme LIVE only if a status/doctor tool answers
+    for name in ("mneme.status", "mneme.doctor"):
+        r = _rpc("tools/call", {"name": name})
+        body = json.loads(r["result"]["content"][0]["text"])
+        assert body["ok"] is True and body["server"] == "mneme"
+        assert r["result"].get("isError") is not True
