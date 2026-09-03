@@ -89,6 +89,13 @@ memory whose source has been deleted is never rounded up to a match on the groun
 that nothing contradicted it, so absence of evidence is reported as absence rather
 than as agreement.
 
+<p align="center"><img src="docs/art/grounding-verdicts.svg" alt="Nine conditions a memory's grounding check can land on, one to a row, each with the verdict it produces. Four produce DRIFT: unreadable provenance, a memory row edited in place, a source whose bytes disagree with the address it carries, and a source that hashes differently than it did at extraction. Four produce UNVERIFIABLE: a missing memory, a memory citing no sources at all, a cited source that has left the store, and a source present but never snapshotted. One produces MATCH, and it is the only one: every cited source present and re-hashing to what was recorded. The row for a source whose bytes disagree with the address stored beside it is accented, because that is the one case a check reading only the stored address would call a match." width="100%"></p>
+
+Nine conditions reach one of those three verdicts, and the drawing above
+lists every one of them. Four resolve to `DRIFT` and four to
+`UNVERIFIABLE`. Exactly one reaches `MATCH`, which is the shape of a check
+that has to earn agreement rather than assume it.
+
 **Provenance on every memory.** Every atom names the turn it came from, the
 extractor, the criterion, and a content hash. The persona is not free text: it
 cites its atoms, so it is drift-checkable too.

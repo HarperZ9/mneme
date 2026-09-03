@@ -137,5 +137,68 @@
         }
       ]
     }
+  ],
+  "cards": [
+    {
+      "file": "grounding-verdicts.svg",
+      "kicker": "fail closed, never a vacuous match",
+      "title": "Every verdict a grounding check reaches, and what reaches it",
+      "source": "mneme drift --state memory.db",
+      "heads": [
+        "condition",
+        "verdict",
+        "what it settles"
+      ],
+      "fields": [
+        {
+          "key": "memory_missing",
+          "value": "UNVERIFIABLE",
+          "note": "The id names no row, so there is nothing whose grounding could be re-derived at all."
+        },
+        {
+          "key": "provenance_unreadable",
+          "value": "DRIFT",
+          "note": "The source list or the snapshot map no longer parses. That is a change to the row, not a gap in it."
+        },
+        {
+          "key": "no_sources_cited",
+          "value": "UNVERIFIABLE",
+          "note": "Nothing to check against. The memory may be perfectly good, and it is still not confirmable, so it never reads as a match."
+        },
+        {
+          "key": "memory_row_altered",
+          "value": "DRIFT",
+          "note": "The row no longer reproduces its own address, so its text, sources or criterion were edited in place."
+        },
+        {
+          "key": "source_row_gone",
+          "value": "UNVERIFIABLE",
+          "note": "A cited turn or memory has left the store. The text the memory was drawn from cannot be read."
+        },
+        {
+          "key": "source_bytes_changed",
+          "value": "DRIFT",
+          "tone": "drift",
+          "note": "Re-hashing the source disagrees with the address it carries. A writer going around the store cannot leave a stale hash that reads as a match."
+        },
+        {
+          "key": "snapshot_never_taken",
+          "value": "UNVERIFIABLE",
+          "note": "The source is present and readable, and no extraction hash was kept, so freshness cannot be settled."
+        },
+        {
+          "key": "source_moved_since",
+          "value": "DRIFT",
+          "note": "The source is intact today and hashes differently than it did when the memory was extracted."
+        },
+        {
+          "key": "all_sources_unchanged",
+          "value": "MATCH",
+          "note": "Every cited source is present and re-hashes to exactly what was recorded at extraction."
+        }
+      ],
+      "alt": "Nine conditions a memory's grounding check can land on, one to a row, each with the verdict it produces. Four produce DRIFT: unreadable provenance, a memory row edited in place, a source whose bytes disagree with the address it carries, and a source that hashes differently than it did at extraction. Four produce UNVERIFIABLE: a missing memory, a memory citing no sources at all, a cited source that has left the store, and a source present but never snapshotted. One produces MATCH, and it is the only one: every cited source present and re-hashing to what was recorded. The row for a source whose bytes disagree with the address stored beside it is accented, because that is the one case a check reading only the stored address would call a match.",
+      "footnote": "Every source is re-hashed from its own fields before its stored address is believed, which is what the accented row records. The four unverifiable rows carry the other half: a memory citing no source has nothing that could have moved, and answering match there would make the verdict loudest where it knows least. The repository's own test drives all nine against a real store, so a branch added to drift.py and not to the drawing fails."
+    }
   ]
 }
