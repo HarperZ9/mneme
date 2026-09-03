@@ -25,6 +25,7 @@ GATES = (
     "art.every_illustration_is_shown",
     "art.tagline_stays_inside_its_rule",
     "art.outcome_fits_its_box",
+    "art.the_gate_can_fail",
 )
 
 DRAWINGS = (
