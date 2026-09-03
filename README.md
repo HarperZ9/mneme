@@ -1,4 +1,4 @@
-<p align="center"><img src=".github/assets/zentropy-banner.png" alt="mneme" width="100%"></p>
+<p align="center"><img src="docs/art/mneme-header.svg" alt="mneme: agent memory that verifies. Every recall re-derives, and every stale memory says so." width="100%"></p>
 
 # mneme
 
@@ -39,6 +39,8 @@ Retrieval is hybrid: BM25 (pure Python, always on) fused with an optional
 embedding channel by Reciprocal Rank Fusion: the same keyword / semantic /
 hybrid surface the leaders offer, with no required embedding API.
 
+<p align="center"><img src="docs/art/recall-lane.svg" alt="Eight stages from a raw turn to a receipt, ending in reproduced or did not reproduce." width="100%"></p>
+
 ## What only mneme does
 
 **A recall you can re-derive.** Every `recall` returns a receipt with the ranked
@@ -69,6 +71,23 @@ grounding against the current store: `MATCH` (source present and unchanged),
 ```bash
 mneme drift            # -> {"overall":"DRIFT","drifted":["…"], …}  exit 1 on drift
 ```
+
+<p align="center"><img src="docs/art/drift-lane.svg" alt="Eight stages from a stored memory to a verdict of match, drift, or unverifiable." width="100%"></p>
+
+Two details make that verdict hard to fake. A memory row has to reproduce its own
+content hash before any of its sources are looked at, which catches a direct edit
+of the text, the source list, or the criterion. Each cited source is then re-hashed
+from its actual fields rather than read back from the hash stored beside it,
+because trusting that stored value would let someone edit the database directly,
+leave a stale hash in place, and collect a `MATCH`. The check re-derives on both
+sides before it will agree with itself.
+
+The three verdicts are also ordered when they roll up across a store: any `DRIFT`
+makes the whole report `DRIFT`, otherwise any `UNVERIFIABLE` makes it
+`UNVERIFIABLE`, and only a clean sweep reports `MATCH`. That order fails closed. A
+memory whose source has been deleted is never rounded up to a match on the grounds
+that nothing contradicted it, so absence of evidence is reported as absence rather
+than as agreement.
 
 **Provenance on every memory.** Every atom names the turn it came from, the
 extractor, the criterion, and a content hash. The persona is not free text: it

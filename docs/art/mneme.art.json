@@ -1,0 +1,141 @@
+{
+  "header": {
+    "name": "mneme",
+    "role": "agent memory that verifies",
+    "tagline": "Every recall re-derives, and every stale memory says so.",
+    "words": [
+      "turn",
+      "atom",
+      "recall",
+      "drift",
+      "receipt"
+    ]
+  },
+  "flows": [
+    {
+      "file": "recall-lane.svg",
+      "kicker": "one question, answered from the record",
+      "title": "How a recall becomes a ranking someone else can re-derive",
+      "footnote": "The ranking is re-derived from the rows, never read back from the receipt.",
+      "alt": "Eight stages of a verifiable recall: turn, atom, scenario, persona, query, score, fuse, receipt. Raw dialogue is stored verbatim as a turn and never summarized away. An atom is one fact bound to the turn it came from, a scenario groups related atoms, and a persona cites its atoms instead of prose. A query records its own scope. Keyword scoring is pure Python BM25 and always available; reciprocal rank fusion folds in a vector channel when an embedder is supplied. The receipt carries the ranked hits, both score channels, the scorer-definition hash, and the fusion rule. Verification re-runs the same scorer over the same rows and compares. Two outcomes: reproduced, and did not reproduce.",
+      "stages": [
+        {
+          "title": "Turn",
+          "note": "Raw dialogue, stored whole and never summarized."
+        },
+        {
+          "title": "Atom",
+          "note": "One fact, bound to the turn it was taken from."
+        },
+        {
+          "title": "Scenario",
+          "note": "Related atoms, grouped into one scene."
+        },
+        {
+          "title": "Persona",
+          "note": "A profile that cites atoms, not prose."
+        },
+        {
+          "title": "Query",
+          "note": "One question, with its scope recorded."
+        },
+        {
+          "title": "Score",
+          "note": "BM25 in pure Python, with no dependency."
+        },
+        {
+          "title": "Fuse",
+          "note": "Rank fusion folds in the vector channel."
+        },
+        {
+          "title": "Receipt",
+          "note": "The hits, both scores, and the fusion rule."
+        }
+      ],
+      "returns": [
+        {
+          "from": 7,
+          "to": 5,
+          "label": "VERIFY RE-RUNS THE SCORER OVER THE SAME ROWS"
+        }
+      ],
+      "outcomes": [
+        {
+          "label": "REPRODUCED",
+          "note": "the same rows re-derive the same ranking",
+          "tone": "verified"
+        },
+        {
+          "label": "DID NOT REPRODUCE",
+          "note": "a tampered ranking, or a store that moved",
+          "tone": "drift"
+        }
+      ]
+    },
+    {
+      "file": "drift-lane.svg",
+      "kicker": "one memory, checked against its source",
+      "title": "How a stored fact reports for itself that it has gone stale",
+      "footnote": "A source that is gone is unverifiable, never a vacuous match.",
+      "alt": "Eight stages of a freshness check: memory, own hash, sources, re-hash, snapshot, compare, fold, verdict. The memory row must first reproduce its own content hash, which catches a direct edit of its text, sources, or criterion. Each cited source is then re-hashed from its actual fields rather than trusted from a stored hash, so a direct database edit cannot preserve a stale value and pass. The current bytes are compared against the hash recorded at extraction time. The fold takes any change first, then any absence, and only then a match. Three outcomes: match, drift, and unverifiable.",
+      "stages": [
+        {
+          "title": "Memory",
+          "note": "One fact, and the criterion it was kept under."
+        },
+        {
+          "title": "Own hash",
+          "note": "The row must reproduce its own hash first."
+        },
+        {
+          "title": "Sources",
+          "note": "Every id it cites: a turn, or a memory."
+        },
+        {
+          "title": "Re-hash",
+          "note": "The source's real fields, hashed again now."
+        },
+        {
+          "title": "Snapshot",
+          "note": "The hash taken when the fact was extracted."
+        },
+        {
+          "title": "Compare",
+          "note": "Current bytes against that snapshot."
+        },
+        {
+          "title": "Fold",
+          "note": "Any change first, then any absence."
+        },
+        {
+          "title": "Verdict",
+          "note": "Per memory, and across the whole store."
+        }
+      ],
+      "returns": [
+        {
+          "from": 6,
+          "to": 5,
+          "label": "THE COMPARE REPEATS FOR EVERY SOURCE CITED"
+        }
+      ],
+      "outcomes": [
+        {
+          "label": "MATCH",
+          "note": "every source is present and unchanged",
+          "tone": "verified"
+        },
+        {
+          "label": "DRIFT",
+          "note": "a source changed under the memory",
+          "tone": "drift"
+        },
+        {
+          "label": "UNVERIFIABLE",
+          "note": "a source is gone, or none was cited",
+          "tone": "none"
+        }
+      ]
+    }
+  ]
+}
