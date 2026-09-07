@@ -4,11 +4,13 @@ an unbroken, re-checkable provenance chain from the web source to the memory.
 Load-bearing: (1) a memory ingested from gather traces back through its source
 turn to the origin receipt (source, ref/url, sha256); (2) the chain is honest
 about native (non-external) turns; (3) a malformed item is skipped with a
-reason, never guessed. Includes a real gather Item when gather is importable.
+reason, never guessed. Includes a real gather Item when Gather is installed or
+configured with MNEME_GATHER_SRC.
 """
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -232,12 +234,36 @@ def test_gather_current_reimport_accepts_semantically_equal_stored_origin_json()
     assert m.store.memory(memory_id)["created_ord"] == memory_ord
 
 
-def test_chain_survives_a_real_gather_item_if_gather_is_available():
+def _import_gather_item_or_skip():
+    configured = os.environ.get("MNEME_GATHER_SRC")
+    if configured:
+        base = Path(configured).expanduser()
+        for candidate in (base, base / "src"):
+            if not candidate.is_dir():
+                continue
+            sys.path.insert(0, str(candidate))
+            try:
+                from gather.item import Item, Provenance
+
+                return Item, Provenance
+            except ModuleNotFoundError as exc:
+                sys.path.pop(0)
+                if exc.name not in {"gather", "gather.item"}:
+                    raise
+        pytest.fail("MNEME_GATHER_SRC is set, but Gather could not be imported from it")
+
     try:
-        sys.path.insert(0, str(Path("C:/dev/public/gather/src")))
         from gather.item import Item, Provenance
-    except Exception:
-        pytest.skip("gather not importable here")
+
+        return Item, Provenance
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"gather", "gather.item"}:
+            raise
+    pytest.skip("Gather is not installed; set MNEME_GATHER_SRC to run the real Gather item check")
+
+
+def test_chain_survives_a_real_gather_item_if_gather_is_available():
+    Item, Provenance = _import_gather_item_or_skip()
     prov = Provenance(source="web", ref="https://example.com/x", method="http-get",
                       fetched_at=0.0, sha256="c" * 64)
     item = Item(kind="metadata", id="real1", title="t",

@@ -1,12 +1,9 @@
 """recall.py — hybrid retrieval (BM25 + optional vector, RRF-fused) with a receipt.
 
-Matches the class leader's retrieval surface (keyword / semantic / hybrid with
-Reciprocal Rank Fusion) on a zero-dep floor: BM25 is pure Python over the memory
-corpus; a vector channel plugs in through an injected embedder (an optional edge,
-never required). The differentiator: every recall returns a RecallReceipt — the
-ranked hits with their component scores and the exact fusion rule — so a third
-party re-runs the same scorer over the same store and reproduces the ranking.
-Nobody else's memory can show its work.
+BM25 is pure Python over the memory corpus; a vector channel plugs in through an
+injected embedder as an optional edge. Each recall returns a RecallReceipt with
+the ranked hits, their component scores, and the exact fusion rule, so a third
+party can re-run the same scorer over the same store and reproduce the ranking.
 
 Deterministic: ties break by memory id, so the ranking is stable and re-derivable.
 """

@@ -1,8 +1,7 @@
 """Falsifiers for accountable forgetting — memory editing you can audit.
 
-The class ships memory edit/delete; none makes it auditable. mneme leaves a
-hash-chained tombstone for every forget/update, so you cannot quietly forget
-that you forgot something.
+Mneme leaves a hash-chained tombstone for each forget/update operation, so the
+store keeps a reviewable record that a memory was removed or changed.
 """
 from __future__ import annotations
 

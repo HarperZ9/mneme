@@ -24,9 +24,9 @@ migration and no new `turns` schema columns.
 
 ## 0.1.0 (unreleased)
 
-First release. Accountable agent memory: the layered memory and hybrid retrieval
-the category expects, plus provenance, re-derivable recall, self-flagging drift,
-a re-derivable benchmark, and accountable forgetting.
+First release. Accountable agent memory with layered storage, hybrid
+retrieval, provenance, re-derivable recall, drift checks, a re-derivable
+benchmark, and accountable forgetting.
 
 - **4-tier memory** — L0 turns, L1 atoms (deterministic rule extraction), L2
   scenarios (union-find clustering), L3 persona; every layer cites its sources.

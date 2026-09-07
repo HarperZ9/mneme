@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.10+, stdlib JSON/SQLite, pytest, existing Mneme and Crucible APIs.
 
-**Spec:** `C:/dev/project-docs/specs/SPEC-QCR-FALSIFIABLE-LANES-20260721.md`
+**Spec:** workspace `project-docs/specs/SPEC-QCR-FALSIFIABLE-LANES-20260721.md`
 
 ---
 

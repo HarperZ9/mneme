@@ -33,9 +33,9 @@ def estimate_tokens(text: str) -> int:
     return len(_TOK.findall(text))
 
 
-# a built-in reproducible scenario, so `mneme bench` yields a number out of the
-# box (as the class ships benchmark figures). Each probe names the fact its
-# answer requires, so answer_recall is checkable, not asserted.
+# A built-in reproducible scenario lets `mneme bench` yield a local number out
+# of the box. Each probe names the fact its answer requires, so answer_recall is
+# checkable, not asserted.
 _SCENARIO_TURNS = [
     {"role": "user", "text": "Hi, my name is Priya and I'm based in Austin, Texas."},
     {"role": "assistant", "text": "Hello Priya! How can I help?"},

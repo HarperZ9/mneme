@@ -1,16 +1,14 @@
 """ingest.py — the ecosystem composition: research intake -> accountable memory,
-with an unbroken provenance chain from the web source to the recalled memory.
+with a provenance chain from the web source to the recalled memory.
 
-No memory product can tell you where a recalled fact ULTIMATELY came from. When
-mneme ingests items from an accountable intake tool (gather, the sibling
-flagship), it binds each item's origin receipt (source, ref/url, method, content
-sha256) to the memory it becomes. The chain is then re-checkable end to end:
+When Mneme ingests items from an accountable intake tool such as Gather, it
+binds each item's origin receipt (source, ref/url, method, content sha256) to
+the memory it becomes. The chain is then re-checkable end to end:
 
     web url --(gather sha256)--> mneme turn --> mneme atom --> recall receipt
 
-An agent that remembers what it researched, and can prove the recalled memory
-traces back to the exact bytes fetched from the exact source. That is the moat a
-single-purpose memory library cannot have.
+The recalled memory can trace back to the bytes and source reference recorded
+by the intake item, subject to later re-fetch/re-hash checks of that source.
 
 Zero-dep and decoupled: gather items arrive as plain dicts (mneme never imports
 gather), so any intake tool that emits {id, text, source, ref, method, sha256}

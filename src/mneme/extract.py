@@ -1,12 +1,11 @@
 """extract.py — L0 turns into L1 atoms, deterministically, with provenance.
 
-The class leader extracts atoms with an LLM. mneme's FLOOR is deterministic and
-zero-dep: a rule-based extractor that pulls fact-shaped sentences (first-person
-statements, preferences, identity, and declaratives) from user turns, so a
-memory can be built with no model and no API — and the same turns always yield
-the same atoms (a memory you can rebuild bit-for-bit). An LLM extractor is a
-pluggable edge (the Extractor protocol) for richer atoms, but it never replaces
-the auditable floor.
+Mneme's default extractor is deterministic and zero-dependency: a rule-based
+extractor that pulls fact-shaped sentences (first-person statements, preferences,
+identity, and declaratives) from user turns. A memory can be built with no model
+and no API, and the same turns yield the same atoms. An LLM extractor is a
+pluggable edge (the Extractor protocol) for richer atoms, while the rule-based
+path remains available as an auditable floor.
 
 Every atom carries the turn id it came from as provenance, so drift.py can later
 ask "does this atom still match its source?".

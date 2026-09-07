@@ -1,10 +1,9 @@
 """mcp.py — mneme over MCP stdio, so an agent can use accountable memory directly.
 
-The class ships agent-facing search tools (tdai_memory_search); mneme ships the
-same surface plus the receipts. Tools: remember, recall, drift, provenance. Every
-recall returns its re-derivable RecallReceipt as the tool result, so an agent (or
-its operator) can see and re-check why a memory was surfaced. Zero-dep JSON-RPC
-2.0 over stdio, matching the MCP protocol the sibling flagships speak.
+The server exposes tools for remember, recall, drift, provenance, forget, audit,
+status, and doctor. Recall returns its re-derivable RecallReceipt as the tool
+result, so an agent or operator can see and re-check why a memory was surfaced.
+The implementation is zero-dependency JSON-RPC 2.0 over stdio.
 
 The DB path comes from the MNEME_STATE env var (default mneme.db), so a host
 config points one server at one memory store.

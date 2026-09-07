@@ -1,18 +1,17 @@
 """embed.py — a zero-dependency local vector channel for fuzzy retrieval.
 
 BM25 is lexical: it matches whole tokens, so "eat" misses "eating" and a query
-misses a morphological variant of the stored fact. The class ships semantic
-search, but only with an embedding API (a key, a network hop, a cost). mneme's
-floor turns on a vector channel with NEITHER: a character n-gram frequency
-vector, hashed to a fixed dimension. Cosine over these catches shared substrings
-and morphological variants BM25 alone misses.
+misses a morphological variant of the stored fact. Mneme's built-in vector
+channel uses character n-gram frequency vectors hashed to a fixed dimension.
+Cosine over these vectors catches shared substrings and morphological variants
+BM25 alone misses.
 
 HONEST SCOPE (stated, not oversold): this is FUZZY / lexical-similarity matching,
-not semantics. It will not connect "car" and "automobile" — only a real
-embedding model does that, and mneme takes one as an injected edge
-(`AgentMemory(embedder=...)`). What this earns is out-of-the-box hybrid recall
-with zero dependencies, and a measurable lift over pure BM25 (see `mneme bench`).
-Deterministic: the same text always hashes to the same vector.
+not semantics. It will not connect "car" and "automobile"; an embedding model can
+be injected for that path (`AgentMemory(embedder=...)`). What this earns is
+out-of-the-box hybrid recall with zero dependencies, and a measurable lift over
+pure BM25 for the included benchmark. Deterministic: the same text always hashes
+to the same vector.
 """
 from __future__ import annotations
 
