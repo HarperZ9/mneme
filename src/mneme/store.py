@@ -1,15 +1,15 @@
 """store.py — the SQLite substrate for the 4-tier memory (stdlib sqlite3, zero-dep).
 
-Layers, matching the class leader's L0-L3 so the feature surface is on par:
+Layer model used by the store:
   L0 turn      raw dialogue turns (role, text, session)
   L1 atom      atomic facts extracted from turns
   L2 scenario  scene blocks grouping related atoms
   L3 persona   the user profile synthesized from scenarios
 
-Every memory row carries its provenance (source_ids, extractor, criterion,
-content_sha256) so a recall or a drift check re-derives from the same bytes.
-The store is pure storage: extraction (extract.py), retrieval (recall.py), and
-drift (drift.py) are separate organs that read/write through it.
+Memory rows carry provenance (source_ids, extractor, criterion, content_sha256)
+so recall and drift checks can re-derive from the same bytes. The store is pure
+storage: extraction (extract.py), retrieval (recall.py), and drift (drift.py) are
+separate organs that read/write through it.
 """
 from __future__ import annotations
 
