@@ -1,11 +1,11 @@
 """Falsifiers for mneme — the accountable agent-memory database.
 
-Load-bearing (the differentiators no competitor ships):
+Load-bearing coverage:
   1. recall returns a receipt that REPRODUCES the ranking (re-run -> identical).
   2. a memory whose source turn CHANGES is flagged DRIFT (not silently kept).
-  3. every atom carries provenance back to its source turn.
-Plus the table-stakes: 4-tier storage, deterministic rebuild, hybrid retrieval,
-idempotent ingest, persona grounded in its atoms.
+  3. atoms carry provenance back to their source turns.
+Core behavior also covers 4-tier storage, deterministic rebuild, hybrid
+retrieval, idempotent ingest, and personas grounded in their atoms.
 """
 from __future__ import annotations
 

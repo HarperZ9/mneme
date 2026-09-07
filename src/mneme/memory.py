@@ -1,11 +1,10 @@
 """memory.py — AgentMemory: the accountable agent-memory database, composed.
 
-One facade over the organs: remember turns (L0) -> extract atoms (L1) with
-provenance -> recall with a re-derivable receipt -> flag drift when a source
-changes -> synthesize a persona (L3) from the atoms. Matches the class leader's
-4-tier surface and hybrid retrieval; adds the three things none of them have:
-a provenance receipt per memory, a recall receipt that reproduces the ranking,
-and a drift verdict that makes a stale memory say so.
+One facade over the core workflows: remember turns (L0), extract atoms (L1) with
+provenance, recall with a re-derivable receipt, flag drift when a source changes,
+and synthesize a persona (L3) from the atoms. Mneme records source provenance for
+stored memories, returns recall receipts that reproduce ranking, and reports
+drift verdicts when source checks run.
 
 Zero external dependencies (stdlib sqlite3). An embedder and an LLM extractor
 are optional edges injected here; the deterministic floor works with neither.

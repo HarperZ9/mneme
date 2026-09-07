@@ -1,39 +1,39 @@
-<p align="center"><img src="docs/art/mneme-header.svg" alt="mneme: agent memory that verifies. Every recall re-derives, and every stale memory says so." width="100%"></p>
+<p align="center"><img src="docs/art/mneme-header.svg" alt="mneme: accountable agent memory with source provenance, reproducible recall ranking, and drift checks." width="100%"></p>
 
 # mneme
 
-> Accountable agent memory. The layered memory and hybrid retrieval agents
-> expect, plus the three things no other memory system ships: every memory
-> carries its provenance, every recall reproduces its ranking, and every stale
-> memory flags its own drift.
+> Accountable agent memory. Mneme records source provenance for stored
+> memories, returns recall receipts that reproduce ranking, and detects source
+> drift when checks run.
 
-**Install from GitHub source**:
-
-```bash
-python -m pip install "mneme-memory @ git+https://github.com/HarperZ9/mneme.git"
-```
-
-When a GitHub release carries the built wheel asset for this version, install
-that wheel directly:
+**Install from the versioned GitHub wheel after the v0.3.0 tag/release is published**:
 
 ```bash
 python -m pip install "https://github.com/HarperZ9/mneme/releases/download/v0.3.0/mneme_memory-0.3.0-py3-none-any.whl"
+```
+
+For a source install from the current GitHub branch:
+
+```bash
+python -m pip install "mneme-memory @ git+https://github.com/HarperZ9/mneme.git"
 ```
 
 Zero runtime dependencies · fully local · deterministic · fair-source.
 
 ## Why another memory library
 
-Agent memory systems store facts and hand them back. None of them can answer two
-questions a serious deployment must ask:
+Agent memory systems need evidence for two operational questions:
 
-- **Why did you recall *this* memory?** Their ranking is a black box.
-- **Is this memory still true to its source?** They keep a fact after its source
-  changed and you find out when the agent acts on stale information.
+- **Why did you recall *this* memory?** Mneme returns the ranked hits, component
+  scores, and fusion rule so the ranking can be reproduced.
+- **Is this memory still grounded in its cited source?** Mneme records source
+  hashes and re-checks them to detect drift, missing sources, or unverifiable
+  grounding.
 
-mneme answers both, because every operation emits a re-checkable receipt.
+Mneme stores that evidence with the memory workflow instead of leaving it as a
+separate operator note.
 
-## The 4-tier memory (on par with the category)
+## The 4-tier memory model
 
 ```
 L0 turn      raw dialogue                 -> stored verbatim
@@ -43,12 +43,11 @@ L3 persona   the user profile             -> synthesized, citing its atoms
 ```
 
 Retrieval is hybrid: BM25 (pure Python, always on) fused with an optional
-embedding channel by Reciprocal Rank Fusion: the same keyword / semantic /
-hybrid surface the leaders offer, with no required embedding API.
+embedding channel by Reciprocal Rank Fusion, with no required embedding API.
 
 <p align="center"><img src="docs/art/recall-lane.svg" alt="Eight stages from a raw turn to a receipt, ending in reproduced or did not reproduce." width="100%"></p>
 
-## What only mneme does
+## Accountability features
 
 **A recall you can re-derive.** Every `recall` returns a receipt with the ranked
 hits, their BM25 and vector scores, and the exact fusion rule. And `verify_recall`
@@ -71,7 +70,7 @@ mneme recall "where does the user live" --user alice --json
 #     "recheck":"mneme recall --query Q --state DB  (re-run the scorer, reproduce the ranking)"}
 ```
 
-**A memory that flags its own staleness.** `drift` re-derives every memory's
+**A drift check for source changes.** `drift` re-derives every memory's
 grounding against the current store: `MATCH` (source present and unchanged),
 `DRIFT` (a source changed under the memory), `UNVERIFIABLE` (a source is gone).
 
@@ -96,7 +95,7 @@ memory whose source has been deleted is never rounded up to a match on the groun
 that nothing contradicted it, so absence of evidence is reported as absence rather
 than as agreement.
 
-<p align="center"><img src="docs/art/grounding-verdicts.svg" alt="Nine conditions a memory's grounding check can land on, one to a row, each with the verdict it produces. Four produce DRIFT: unreadable provenance, a memory row edited in place, a source whose bytes disagree with the address it carries, and a source that hashes differently than it did at extraction. Four produce UNVERIFIABLE: a missing memory, a memory citing no sources at all, a cited source that has left the store, and a source present but never snapshotted. One produces MATCH, and it is the only one: every cited source present and re-hashing to what was recorded. The row for a source whose bytes disagree with the address stored beside it is accented, because that is the one case a check reading only the stored address would call a match." width="100%"></p>
+<p align="center"><img src="docs/art/grounding-verdicts.svg" alt="Nine conditions a memory's grounding check can land on, one to a row, each with the verdict it produces. Four produce DRIFT: unreadable provenance, a memory row edited in place, a source whose bytes disagree with the address it carries, and a source that hashes differently than it did at extraction. Four produce UNVERIFIABLE: a missing memory, a memory citing no sources at all, a cited source that has left the store, and a source present but never snapshotted. One produces MATCH: all cited sources are present and re-hash to what was recorded. The row for a source whose bytes disagree with the address stored beside it is accented, because that is the one case a check reading only the stored address would call a match." width="100%"></p>
 
 Nine conditions reach one of those three verdicts, and the drawing above
 lists every one of them. Four resolve to `DRIFT` and four to
@@ -127,8 +126,7 @@ deterministic floor works with no model and no API.
 ## The ecosystem: memory that traces to its source
 
 Point mneme at an accountable intake tool ([gather](https://github.com/HarperZ9/gather),
-the sibling flagship) and the provenance chains end to end, something no
-single-purpose memory library can do:
+the sibling flagship) and the provenance chain can run end to end:
 
 ```
 web url --(gather sha256)--> mneme turn --> mneme atom --> recall
@@ -224,10 +222,9 @@ source certification.
 
 ## Accountable forgetting
 
-Every memory system lets you delete a fact. mneme is the only one where the
-deletion is auditable: `forget` and `update` leave a hash-chained tombstone,
-what was forgotten, its hash, and why, so you cannot quietly forget that you
-forgot something (required for GDPR-style "right to be forgotten" you can prove).
+Mneme deletes facts with an audit trail: `forget` and `update` leave a
+hash-chained tombstone, what was forgotten, its hash, and why, so the deletion
+record remains reviewable for GDPR-style "right to be forgotten" workflows.
 
 ```bash
 mneme forget <memory_id> --reason "user requested deletion"
@@ -250,8 +247,8 @@ travels with the tool result.
 
 ## Benchmark you can re-run
 
-The category is sold on one number: "N% fewer tokens." Everyone publishes the
-reduction; nobody proves the answer *survived* it. mneme measures both.
+Token-reduction benchmarks are more useful when paired with answer-retention
+checks. Mneme reports both for the included benchmark.
 
 ```bash
 mneme bench
@@ -259,12 +256,11 @@ mneme bench
 # answer_recall:   100%    (5 probes, every needed fact survived the reduction)
 ```
 
-A reduction is only reported **alongside** its answer recall, so a number that
-looks great by forgetting the answer is disqualified, not a win. The receipt
-carries the per-probe detail and the exact token estimator, so a third party
-re-runs the measurement over the same conversation and reproduces the number,
-a benchmark you can escrow, not a marketing figure. Point it at your own
-conversation with `--turns convo.json --probes probes.json`.
+The included reduction is reported **alongside** answer recall, so a run that
+forgets required answers is visible in the result. The receipt carries the
+per-probe detail and the exact token estimator, so a third party can re-run the
+measurement over the same conversation and compare the number. Point it at your
+own conversation with `--turns convo.json --probes probes.json`.
 
 ## Scenarios (L2)
 
@@ -279,9 +275,10 @@ cites its atoms, so it is drift-checkable too (a scenario whose atom is gone is
 ## Guarantees
 
 - **Zero runtime dependencies** (stdlib `sqlite3`). `pytest` is the only dev dep.
-- **Deterministic.** No wall clock or randomness enters a stored hash or a
-  ranking; the same turns rebuild the same memory, byte for byte.
-- **Tests are the contract.** Every behavior above ships with a falsifier.
+- **Deterministic core.** Stored hashes and default rankings are derived from
+  the supplied turns, so the same input rebuilds the same memory state.
+- **Tests are the contract.** The core workflows above have regression coverage
+  with false-success controls for recall, drift, audit, and ingestion.
 
 ## License
 
