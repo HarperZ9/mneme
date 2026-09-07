@@ -1,11 +1,10 @@
 """memory.py — AgentMemory: the accountable agent-memory database, composed.
 
-One facade over the organs: remember turns (L0) -> extract atoms (L1) with
-provenance -> recall with a re-derivable receipt -> flag drift when a source
-changes -> synthesize a persona (L3) from the atoms. Matches the class leader's
-4-tier surface and hybrid retrieval; adds the three things none of them have:
-a provenance receipt per memory, a recall receipt that reproduces the ranking,
-and a drift verdict that makes a stale memory say so.
+One facade over the core workflows: remember turns (L0), extract atoms (L1) with
+provenance, recall with a re-derivable receipt, flag drift when a source changes,
+and synthesize a persona (L3) from the atoms. Mneme records source provenance for
+stored memories, returns recall receipts that reproduce ranking, and reports
+drift verdicts when source checks run.
 
 Zero external dependencies (stdlib sqlite3). An embedder and an LLM extractor
 are optional edges injected here; the deterministic floor works with neither.
@@ -16,9 +15,10 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .drift import drift_report
-from .extract import Atom, Extractor, RuleExtractor, extract_atoms
+from .extract import Extractor, RuleExtractor, extract_atoms
 from .recall import Embedder, recall
 from .receipt import RecallReceipt, content_hash
+from .source import plan_source_turns, preflight_memory_writes
 from .store import Store
 
 _L1_CRITERION = "atomic user fact"
@@ -49,12 +49,18 @@ class AgentMemory:
         turn is {role, text} (+ optional id). `user` scopes the memory to one
         user (multi-tenant isolation); default "" is a single shared user.
         Idempotent by content id. Returns a summary with the provenance receipts."""
-        turn_rows = []
-        for i, t in enumerate(turns):
-            tid = t.get("id") or content_hash(session, str(i), t["role"], t["text"])[:16]
-            self.store.add_turn(tid, session, t["role"], t["text"])
-            turn_rows.append({"id": tid, "role": t["role"], "text": t["text"]})
+        planned = plan_source_turns(self.store, session, turns, user=user)
+        turn_rows = [t.extraction_row() for t in planned]
         atoms = extract_atoms(turn_rows, self.extractor)
+        preflight_memory_writes(
+            self.store,
+            atoms,
+            criterion=_L1_CRITERION,
+            user=user,
+        )
+        for t in planned:
+            if t.write:
+                self.store.add_turn(t.id, session, t.role, t.text, origin=t.origin)
         receipts = []
         for aid, atom in atoms:
             r = self.store.add_memory(aid, "L1", atom.text, [atom.source_id],
@@ -117,11 +123,11 @@ class AgentMemory:
         return r.as_dict() if r else None
 
     # -- ecosystem composition ----------------------------------------------
-    def ingest_gather(self, session: str, items: list[dict]) -> dict:
+    def ingest_gather(self, session: str, items: list[dict], user: str = "") -> dict:
         """Ingest accountable-intake items (gather's shape) into memory, binding
         each item's origin receipt so the memory traces to its web source."""
         from .ingest import from_gather
-        return from_gather(self, items, session)
+        return from_gather(self, items, session, user=user)
 
     def provenance_chain(self, memory_id: str) -> dict | None:
         """The full re-checkable chain for a memory: atom -> source turn ->

@@ -1,10 +1,32 @@
 # Changelog
 
+## 0.3.0 (2026-09-07)
+
+Release-prep candidate for source-turn partitioning and Gather interop.
+
+- Partition named-user high-level source turn IDs by user/session, with a
+  reserved `src:v1:` internal namespace.
+- Preserve the default-user legacy raw-ID namespace while rejecting new
+  default-user high-level writes that try to mint reserved internal IDs.
+- Route Gather ingestion through the same source planner and add `user=...` /
+  `mneme ingest --user` support while preserving existing callers that omit it.
+- Reuse pre-partition named-user raw source rows only when ownership is
+  unambiguous from current provenance; default-user citations now make a legacy
+  raw source ambiguous for named-user reuse.
+- Compare origin JSON semantically for compatibility so key order differences
+  do not duplicate valid legacy Gather rows or reject identical current
+  reimports.
+- Skip exact high-level no-op source/memory writes so repeated same-byte imports
+  do not advance source or memory ordinals.
+
+This is not a historical database canonicalization release: it adds no real DB
+migration and no new `turns` schema columns.
+
 ## 0.1.0 (unreleased)
 
-First release. Accountable agent memory: the layered memory and hybrid retrieval
-the category expects, plus provenance, re-derivable recall, self-flagging drift,
-a re-derivable benchmark, and accountable forgetting.
+First release. Accountable agent memory with layered storage, hybrid
+retrieval, provenance, re-derivable recall, drift checks, a re-derivable
+benchmark, and accountable forgetting.
 
 - **4-tier memory** — L0 turns, L1 atoms (deterministic rule extraction), L2
   scenarios (union-find clustering), L3 persona; every layer cites its sources.

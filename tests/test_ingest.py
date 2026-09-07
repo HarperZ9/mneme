@@ -4,10 +4,13 @@ an unbroken, re-checkable provenance chain from the web source to the memory.
 Load-bearing: (1) a memory ingested from gather traces back through its source
 turn to the origin receipt (source, ref/url, sha256); (2) the chain is honest
 about native (non-external) turns; (3) a malformed item is skipped with a
-reason, never guessed. Includes a real gather Item when gather is importable.
+reason, never guessed. Includes a real gather Item when Gather is installed or
+configured with MNEME_GATHER_SRC.
 """
 from __future__ import annotations
 
+import json
+import os
 import sys
 from pathlib import Path
 
@@ -16,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import pytest
 
 from mneme import AgentMemory
+from mneme.extract import extract_atoms
 
 # gather's Provenance shape, as the dicts an intake tool emits
 GATHER_ITEMS = [
@@ -64,12 +68,202 @@ def test_ingest_is_idempotent_by_content():
     assert len(m.store.memories(layer="L1")) == a          # no duplicates on re-ingest
 
 
-def test_chain_survives_a_real_gather_item_if_gather_is_available():
+def test_gather_ingest_partitions_named_user_source_ids():
+    m = AgentMemory(":memory:")
+    first = m.ingest_gather("session-a", [{
+        "id": "g1",
+        "text": "I work on project Alpha.",
+        "source": "web",
+        "ref": "https://example.com/a",
+        "method": "browser-extract",
+        "sha256": "a" * 64,
+    }], user="user-a")
+    first_memory_id = first["provenance"][0]["memory_id"]
+    first_source_id = first["provenance"][0]["source_turn"]
+
+    second = m.ingest_gather("session-b", [{
+        "id": "g1",
+        "text": "I work on project Beta.",
+        "source": "web",
+        "ref": "https://example.com/b",
+        "method": "browser-extract",
+        "sha256": "b" * 64,
+    }], user="user-b")
+    second_source_id = second["provenance"][0]["source_turn"]
+
+    assert first_source_id != second_source_id
+    assert m.store.turn(first_source_id)["session"] == "session-a"
+    assert m.store.turn(second_source_id)["session"] == "session-b"
+    assert m.provenance_chain(first_memory_id)["chain"][0]["origin"]["ref"].endswith("/a")
+    assert len(m.store.memories(layer="L1", user="user-a")) == 1
+    assert len(m.store.memories(layer="L1", user="user-b")) == 1
+
+
+def test_gather_duplicate_item_id_batch_is_rejected_without_partial_writes():
+    m = AgentMemory(":memory:")
+
+    with pytest.raises(ValueError, match="conflicting turn id"):
+        m.ingest_gather("s", [
+            {"id": "g1", "text": "I prefer Alpha notes.", "sha256": "a" * 64},
+            {"id": "g1", "text": "I prefer Beta notes.", "sha256": "a" * 64},
+        ], user="alice")
+
+    assert m.store.turns() == []
+    assert m.store.memories(layer="L1") == []
+
+
+def test_gather_named_user_legacy_raw_source_reimport_reuses_record():
+    m = AgentMemory(":memory:")
+    text = "I am based in Austin."
+    origin = {
+        "source": "web",
+        "ref": "https://example.com/profile",
+        "method": "browser-extract",
+        "sha256": "a" * 64,
+    }
+    m.store.add_turn("g1", "research", "source", text, origin=origin)
+    [(memory_id, atom)] = extract_atoms(
+        [{"id": "g1", "role": "user", "text": text}],
+        m.extractor,
+    )
+    m.store.add_memory(
+        memory_id,
+        "L1",
+        atom.text,
+        [atom.source_id],
+        m.extractor.name,
+        "atomic user fact",
+        session="research",
+        user="alice",
+    )
+    source_ord = m.store.turn("g1")["ord"]
+    memory_ord = m.store.memory(memory_id)["created_ord"]
+
+    summary = m.ingest_gather("research", [{
+        "id": "g1",
+        "text": text,
+        **origin,
+    }], user="alice")
+
+    assert summary["provenance"][0]["source_turn"] == "g1"
+    assert len(m.store.memories(layer="L1", user="alice")) == 1
+    assert m.store.turn("g1")["ord"] == source_ord
+    assert m.store.memory(memory_id)["created_ord"] == memory_ord
+
+
+def test_gather_legacy_reimport_reuses_semantically_equal_origin_json():
+    m = AgentMemory(":memory:")
+    text = "I am based in Austin."
+    stored_origin = {
+        "sha256": "a" * 64,
+        "method": "browser-extract",
+        "ref": "https://example.com/profile",
+        "source": "web",
+    }
+    m.store.add_turn("g1", "research", "source", text, origin=stored_origin)
+    [(memory_id, atom)] = extract_atoms(
+        [{"id": "g1", "role": "user", "text": text}],
+        m.extractor,
+    )
+    m.store.add_memory(
+        memory_id,
+        "L1",
+        atom.text,
+        [atom.source_id],
+        m.extractor.name,
+        "atomic user fact",
+        session="research",
+        user="alice",
+    )
+    stored_origin_bytes = m.store.turn("g1")["origin"]
+    source_ord = m.store.turn("g1")["ord"]
+    memory_ord = m.store.memory(memory_id)["created_ord"]
+
+    summary = m.ingest_gather("research", [{
+        "id": "g1",
+        "text": text,
+        "source": "web",
+        "ref": "https://example.com/profile",
+        "method": "browser-extract",
+        "sha256": "a" * 64,
+    }], user="alice")
+
+    assert summary["provenance"][0]["source_turn"] == "g1"
+    assert len(m.store.turns()) == 1
+    assert m.store.turn("g1")["origin"] == stored_origin_bytes
+    assert m.store.turn("g1")["ord"] == source_ord
+    assert m.store.memory(memory_id)["created_ord"] == memory_ord
+
+
+def test_gather_current_reimport_accepts_semantically_equal_stored_origin_json():
+    m = AgentMemory(":memory:")
+    item = {
+        "id": "g1",
+        "text": "I am based in Austin.",
+        "source": "web",
+        "ref": "https://example.com/profile",
+        "method": "browser-extract",
+        "sha256": "a" * 64,
+    }
+    first = m.ingest_gather("research", [item], user="alice")
+    source_id = first["provenance"][0]["source_turn"]
+    memory_id = first["provenance"][0]["memory_id"]
+    origin = m.store.turn_origin(source_id)
+    reordered_origin = {
+        "mneme_source_partition": origin["mneme_source_partition"],
+        "sha256": origin["sha256"],
+        "method": origin["method"],
+        "ref": origin["ref"],
+        "source": origin["source"],
+    }
+    reordered_origin_bytes = json.dumps(reordered_origin)
+    m.store.conn.execute(
+        "UPDATE turns SET origin=? WHERE id=?",
+        (reordered_origin_bytes, source_id),
+    )
+    m.store.conn.commit()
+    source_ord = m.store.turn(source_id)["ord"]
+    memory_ord = m.store.memory(memory_id)["created_ord"]
+
+    second = m.ingest_gather("research", [item], user="alice")
+
+    assert second["provenance"][0]["source_turn"] == source_id
+    assert len(m.store.turns()) == 1
+    assert m.store.turn(source_id)["origin"] == reordered_origin_bytes
+    assert m.store.turn(source_id)["ord"] == source_ord
+    assert m.store.memory(memory_id)["created_ord"] == memory_ord
+
+
+def _import_gather_item_or_skip():
+    configured = os.environ.get("MNEME_GATHER_SRC")
+    if configured:
+        base = Path(configured).expanduser()
+        for candidate in (base, base / "src"):
+            if not candidate.is_dir():
+                continue
+            sys.path.insert(0, str(candidate))
+            try:
+                from gather.item import Item, Provenance
+
+                return Item, Provenance
+            except ModuleNotFoundError as exc:
+                sys.path.pop(0)
+                if exc.name not in {"gather", "gather.item"}:
+                    raise
+        pytest.fail("MNEME_GATHER_SRC is set, but Gather could not be imported from it")
+
     try:
-        sys.path.insert(0, str(Path("C:/dev/public/gather/src")))
         from gather.item import Item, Provenance
-    except Exception:
-        pytest.skip("gather not importable here")
+
+        return Item, Provenance
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"gather", "gather.item"}:
+            raise
+    pytest.skip("Gather is not installed; set MNEME_GATHER_SRC to run the real Gather item check")
+
+
+def test_chain_survives_a_real_gather_item_if_gather_is_available():
+    Item, Provenance = _import_gather_item_or_skip()
     prov = Provenance(source="web", ref="https://example.com/x", method="http-get",
                       fetched_at=0.0, sha256="c" * 64)
     item = Item(kind="metadata", id="real1", title="t",

@@ -1,24 +1,19 @@
 """bench.py — token-economics benchmark with a re-derivable number.
 
-The category is won on one headline: "N% fewer tokens." Everyone publishes the
-reduction; nobody publishes proof the answer SURVIVED the reduction. A memory
-that hits 90% reduction by dropping the fact the agent needed is not efficient,
-it is broken — and no competitor's benchmark can tell the two apart.
-
-mneme measures both, re-derivably:
+Token reduction is more useful when it is checked beside answer retention. Mneme
+measures both for a supplied conversation and probe set:
 
   token_reduction  1 - tokens(recalled context) / tokens(full history)
   answer_recall    fraction of probes whose needed fact IS in the recalled context
 
-A reduction is only reported ALONGSIDE its answer_recall, so a number that looks
-great by forgetting the answer is visibly disqualified. The receipt carries the
-per-probe detail and the exact token estimator, so a third party re-runs the same
-measurement over the same conversation and reproduces the number — a benchmark
-you can escrow, not a marketing figure.
+The reduction is reported alongside answer_recall, so a run that forgets required
+answers is visible in the receipt. The receipt carries per-probe detail and the
+exact token estimator, so a third party can re-run the same measurement over the
+same conversation and compare the number.
 
 Zero-dep floor: token counting is a stated word/punctuation estimate; inject a
-real tokenizer (e.g. tiktoken) via `token_fn` for exact counts. The reduction
-RATIO is robust to the estimator; the receipt names which was used.
+real tokenizer (e.g. tiktoken) via `token_fn` for exact counts. The receipt names
+which estimator was used.
 """
 from __future__ import annotations
 
@@ -38,9 +33,9 @@ def estimate_tokens(text: str) -> int:
     return len(_TOK.findall(text))
 
 
-# a built-in reproducible scenario, so `mneme bench` yields a number out of the
-# box (as the class ships benchmark figures). Each probe names the fact its
-# answer requires, so answer_recall is checkable, not asserted.
+# A built-in reproducible scenario lets `mneme bench` yield a local number out
+# of the box. Each probe names the fact its answer requires, so answer_recall is
+# checkable, not asserted.
 _SCENARIO_TURNS = [
     {"role": "user", "text": "Hi, my name is Priya and I'm based in Austin, Texas."},
     {"role": "assistant", "text": "Hello Priya! How can I help?"},

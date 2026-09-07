@@ -1,14 +1,13 @@
 """scenario.py — L2 scenarios: group related atoms into scene blocks.
 
-The class leader's L2 layer clusters atoms into scenarios with an LLM. mneme's
-floor is deterministic: atoms in a session are clustered by shared salient
-tokens (a connected-components pass over an atom-similarity graph), so the same
-atoms always yield the same scenarios — a scenario you can rebuild bit-for-bit.
+Mneme's default L2 path is deterministic: atoms in a session are clustered by
+shared salient tokens through a connected-components pass over an
+atom-similarity graph. The same atoms yield the same scenarios.
 
 Each scenario CITES its member atom ids as provenance, so an L2 scenario is
 itself drift-checkable (drift.py treats a memory whose cited source is gone as
-UNVERIFIABLE, and L2 inherits that). A scenario whose atoms drift is a scenario
-you can no longer trust — surfaced, not hidden.
+UNVERIFIABLE, and L2 inherits that). A scenario whose atoms drift is surfaced
+through the verdict instead of being silently trusted.
 """
 from __future__ import annotations
 

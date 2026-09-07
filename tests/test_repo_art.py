@@ -1,8 +1,8 @@
 """The README's diagrams are generated from a spec, so they can go stale the way any
-other derived file goes stale: somebody edits a stage name, nobody re-renders, and the
-picture describes a version of mneme that no longer exists. The gate re-renders from the
-spec and compares bytes. This runs the gate under pytest and asserts on its receipt, so
-a drifted drawing fails the suite instead of quietly shipping.
+other derived file goes stale: a stage name changes without re-rendering, and the
+picture describes a version of mneme that no longer exists. The gate re-renders from
+the spec and compares bytes. This runs the gate under pytest and asserts on its
+receipt, so a drifted drawing fails the suite instead of quietly shipping.
 
 Below that, the grounding-verdicts card gets a second layer. The gates settle
 whether it fits its columns; whether it is TRUE of drift.py is settled by
