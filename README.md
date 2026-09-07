@@ -7,10 +7,17 @@
 > carries its provenance, every recall reproduces its ranking, and every stale
 > memory flags its own drift.
 
-**Install today** (PyPI release imminent):
+**Install from GitHub source**:
 
 ```bash
-pip install git+https://github.com/HarperZ9/mneme.git
+python -m pip install "mneme-memory @ git+https://github.com/HarperZ9/mneme.git"
+```
+
+When a GitHub release carries the built wheel asset for this version, install
+that wheel directly:
+
+```bash
+python -m pip install "https://github.com/HarperZ9/mneme/releases/download/v0.3.0/mneme_memory-0.3.0-py3-none-any.whl"
 ```
 
 Zero runtime dependencies · fully local · deterministic · fair-source.
@@ -58,8 +65,8 @@ assert verify_recall(r, rows, embedder=embed)   # re-derived from the store, not
 ```
 
 ```bash
-mneme remember alice session.json
-mneme recall "where does the user live" --json
+mneme remember chat session.json --user alice
+mneme recall "where does the user live" --user alice --json
 # -> {"schema":"mneme.recall/1","hits":[{"memory_id":"…","bm25":2.14,"fused":…}],
 #     "recheck":"mneme recall --query Q --state DB  (re-run the scorer, reproduce the ranking)"}
 ```
@@ -106,9 +113,10 @@ cites its atoms, so it is drift-checkable too.
 from mneme import AgentMemory
 
 mem = AgentMemory("mem.db")                       # or ":memory:"
-mem.remember("alice", [{"role": "user", "text": "I live in Denver and love dark roast."}])
+mem.remember("chat", [{"role": "user", "text": "I live in Denver and love dark roast."}],
+             user="alice")
 
-receipt = mem.recall("coffee preference")         # RecallReceipt, re-derivable
+receipt = mem.recall("coffee preference", user="alice")  # RecallReceipt, re-derivable
 print(mem.drift()["overall"])                     # MATCH until a source changes
 ```
 
@@ -127,15 +135,19 @@ web url --(gather sha256)--> mneme turn --> mneme atom --> recall
 ```
 
 ```bash
-mneme ingest research items.json     # gather-shaped {id,text,source,ref,method,sha256}
-mneme recall "where is the user based"
+mneme ingest research items.json --user alice     # gather-shaped {id,text,source,ref,method,sha256}
+mneme recall "where is the user based" --user alice
 mneme chain <memory_id>              # -> the web url + content hash it came from
 ```
 
 An agent that remembers what it researched, and can prove a recalled memory
 traces to the exact bytes fetched from the exact source (`re-fetch the ref,
 re-hash, confirm it equals the origin sha256`). Any intake tool that emits that
-shape composes; mneme never imports gather.
+shape composes; mneme never imports gather. Named-user `remember` and Gather
+ingest derive source turn IDs from the user, session, supplied item/turn ID, and
+for Gather the origin hash. The shared default user keeps the legacy raw-ID
+namespace, except new default-user writes cannot use Mneme's reserved internal
+source ID prefix.
 
 And the loop closes at the other end. `mneme to-crucible` emits a schema-v2
 [crucible](https://github.com/HarperZ9/crucible) export: each memory is a claim
