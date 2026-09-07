@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/art/mneme-header.svg" alt="mneme: accountable agent memory with source provenance, reproducible recall ranking, and drift checks." width="100%"></p>
+<p align="center"><img src="docs/art/mneme-header.svg" alt="mneme: Source provenance, reproducible ranking, and drift checks." width="100%"></p>
 
 # mneme
 
