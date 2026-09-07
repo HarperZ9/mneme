@@ -303,8 +303,12 @@ class Store:
         return turn_id
 
     def turn_origin(self, turn_id: str) -> dict | None:
-        """The external origin receipt bound to a turn (e.g. a gather source
-        receipt), or None if the turn was not ingested from an external source."""
+        """The origin/metadata receipt bound to a turn.
+
+        Gather turns carry an external source receipt. Named-user high-level
+        turns may carry internal partition metadata. Legacy native turns return
+        None.
+        """
         row = self.turn(turn_id)
         if row is None or not row["origin"]:
             return None
@@ -330,6 +334,16 @@ class Store:
                 "malformed provenance: source_ids must be an iterable of source-id strings")
         sids = validate_source_ids(list(source_ids))
         sha = memory_hash(text, sids, criterion)
+        # snapshot each source's content hash NOW, so a later change to a source
+        # (turn or cited memory) is caught by re-comparison — the content address
+        # binds source CONTENT, not just ids.
+        src_hashes = {}
+        for sid in sids:
+            src = self.turn(sid) or self.memory(sid)
+            if src is not None:
+                src_hashes[sid] = src["content_sha256"]
+        source_ids_json = json.dumps(sids)
+        source_hashes_json = json.dumps(src_hashes, sort_keys=True)
         # id-collision guard: idempotent for identical content in the same
         # partition, but never silently REPLACE a row owned by another user or
         # carrying different content (that is update()'s audited job) — fail
@@ -344,20 +358,22 @@ class Store:
                 raise ValueError(
                     f"memory id {memory_id!r} exists with different content; "
                     f"route a content change through update()")
-        # snapshot each source's content hash NOW, so a later change to a source
-        # (turn or cited memory) is caught by re-comparison — the content address
-        # binds source CONTENT, not just ids.
-        src_hashes = {}
-        for sid in sids:
-            src = self.turn(sid) or self.memory(sid)
-            if src is not None:
-                src_hashes[sid] = src["content_sha256"]
+            if (prior["layer"] == layer
+                    and prior["session"] == session
+                    and prior["text"] == text
+                    and prior["source_ids"] == source_ids_json
+                    and prior["extractor"] == extractor
+                    and prior["criterion"] == criterion
+                    and prior["valid_until"] is None
+                    and prior["source_hashes"] == source_hashes_json):
+                return ProvenanceReceipt(
+                    memory_id, layer, tuple(sids), extractor, criterion, sha)
         self.conn.execute(
             "INSERT OR REPLACE INTO memories"
             '(id,layer,session,"user",text,source_ids,extractor,criterion,content_sha256,created_ord,source_hashes) '
             "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            (memory_id, layer, session, user, text, json.dumps(sids), extractor,
-             criterion, sha, self._next_ord(), json.dumps(src_hashes, sort_keys=True)))
+            (memory_id, layer, session, user, text, source_ids_json, extractor,
+             criterion, sha, self._next_ord(), source_hashes_json))
         self.conn.commit()
         return ProvenanceReceipt(memory_id, layer, tuple(sids), extractor, criterion, sha)
 

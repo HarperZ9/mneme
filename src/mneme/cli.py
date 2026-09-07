@@ -270,6 +270,7 @@ def build_parser() -> argparse.ArgumentParser:
     ing = sub.add_parser("ingest", help="ingest gather-shaped intake items (JSON) with source provenance")
     ing.add_argument("session")
     ing.add_argument("items", help="JSON list of {id,text,source,ref,method,sha256} (or - for stdin)")
+    ing.add_argument("--user", default="", help="scope ingested memories to one user (multi-tenant)")
     ing.set_defaults(func=cmd_ingest)
 
     ch = sub.add_parser("chain", help="walk a memory's full provenance chain back to its web source")
@@ -355,7 +356,10 @@ def cmd_audit(args) -> int:
 def cmd_ingest(args) -> int:
     text = sys.stdin.read() if args.items == "-" else open(args.items, encoding="utf-8").read()
     items = json.loads(text)
-    print(json.dumps(AgentMemory(args.state).ingest_gather(args.session, items), indent=2))
+    print(json.dumps(
+        AgentMemory(args.state).ingest_gather(args.session, items, user=args.user),
+        indent=2,
+    ))
     return 0
 
 

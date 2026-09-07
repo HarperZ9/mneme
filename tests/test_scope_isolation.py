@@ -19,6 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import pytest
 
 from mneme import AgentMemory
+from mneme.drift import MATCH, check_memory
+from mneme.extract import extract_atoms
 from mneme.mcp import handle_request
 
 
@@ -85,14 +87,257 @@ def test_consolidate_never_merges_across_users():
     assert m.store.memories(layer="L1", user="bob"), "bob's atom must survive"
 
 
-def test_cross_tenant_id_collision_is_rejected_not_silently_overwritten():
+def test_cross_tenant_same_content_is_partitioned_not_rejected():
     m = AgentMemory(":memory:")
     m.remember("chat1", [{"role": "user", "text": "I live in Denver."}], user="alice")
     alice = m.store.memories(layer="L1", user="alice")
     assert alice
     aid = alice[0]["id"]
-    # bob stores the identical sentence in the same session -> same content-derived id
-    with pytest.raises(ValueError):
-        m.remember("chat1", [{"role": "user", "text": "I live in Denver."}], user="bob")
-    # alice still owns her memory; it was not reassigned to bob
+
+    m.remember("chat1", [{"role": "user", "text": "I live in Denver."}], user="bob")
+
     assert m.store.memory(aid)["user"] == "alice"
+    assert len(m.store.memories(layer="L1", user="alice")) == 1
+    assert len(m.store.memories(layer="L1", user="bob")) == 1
+    assert m.store.memories(layer="L1", user="alice")[0]["id"] != (
+        m.store.memories(layer="L1", user="bob")[0]["id"]
+    )
+
+
+def test_supplied_turn_id_is_partitioned_by_user_and_session():
+    m = AgentMemory(":memory:")
+    first = m.remember("session-a", [{
+        "id": "turn-1",
+        "role": "user",
+        "text": "I work on project Alpha.",
+    }], user="user-a")
+    first_memory_id = first["provenance"][0]["memory_id"]
+    first_source_id = first["provenance"][0]["source_ids"][0]
+    assert check_memory(m.store, first_memory_id).verdict == MATCH
+
+    second = m.remember("session-b", [{
+        "id": "turn-1",
+        "role": "user",
+        "text": "I work on project Beta.",
+    }], user="user-b")
+
+    second_source_id = second["provenance"][0]["source_ids"][0]
+    assert first_source_id != second_source_id
+    assert m.store.turn(first_source_id)["session"] == "session-a"
+    assert m.store.turn(second_source_id)["session"] == "session-b"
+    assert "Alpha" in m.store.turn(first_source_id)["text"]
+    assert "Beta" in m.store.turn(second_source_id)["text"]
+    assert check_memory(m.store, first_memory_id).verdict == MATCH
+    scoped = m.recall("project", user="user-a", session="session-a")
+    assert scoped.hits and all("Beta" not in hit.text for hit in scoped.hits)
+
+
+def test_same_user_can_reuse_supplied_turn_id_in_different_sessions():
+    m = AgentMemory(":memory:")
+    first = m.remember("session-a", [{
+        "id": "turn-1",
+        "role": "user",
+        "text": "I prefer Alpha notes.",
+    }], user="user-a")
+    second = m.remember("session-b", [{
+        "id": "turn-1",
+        "role": "user",
+        "text": "I prefer Beta notes.",
+    }], user="user-a")
+
+    first_source_id = first["provenance"][0]["source_ids"][0]
+    second_source_id = second["provenance"][0]["source_ids"][0]
+    assert first_source_id != second_source_id
+    assert check_memory(m.store, first["provenance"][0]["memory_id"]).verdict == MATCH
+    assert check_memory(m.store, second["provenance"][0]["memory_id"]).verdict == MATCH
+
+
+def test_default_user_preserves_legacy_source_id_and_idempotence():
+    m = AgentMemory(":memory:")
+    first = m.remember("s", [{
+        "id": "turn-1",
+        "role": "user",
+        "text": "I live in Denver.",
+    }])
+    second = m.remember("s", [{
+        "id": "turn-1",
+        "role": "user",
+        "text": "I live in Denver.",
+    }])
+
+    assert first["provenance"][0]["source_ids"] == ["turn-1"]
+    assert second["provenance"][0]["source_ids"] == ["turn-1"]
+    assert len(m.store.turns()) == 1
+    assert len(m.store.memories(layer="L1")) == 1
+
+
+def test_default_user_rejects_reserved_internal_source_id_without_partial_writes():
+    m = AgentMemory(":memory:")
+
+    with pytest.raises(ValueError, match="reserved internal source id"):
+        m.remember("s", [{
+            "id": "src:v1:aaaaaaaaaaaaaaaa",
+            "role": "user",
+            "text": "I live in Denver.",
+        }])
+
+    assert m.store.turns() == []
+    assert m.store.memories(layer="L1") == []
+
+
+def test_named_user_legacy_raw_source_reimport_reuses_record_without_new_ordinals():
+    m = AgentMemory(":memory:")
+    text = "I live in Denver."
+    legacy_source_id = "turn-1"
+    m.store.add_turn(legacy_source_id, "s", "user", text)
+    [(memory_id, atom)] = extract_atoms(
+        [{"id": legacy_source_id, "role": "user", "text": text}],
+        m.extractor,
+    )
+    m.store.add_memory(
+        memory_id,
+        "L1",
+        atom.text,
+        [atom.source_id],
+        m.extractor.name,
+        "atomic user fact",
+        session="s",
+        user="alice",
+    )
+    legacy_turn_ord = m.store.turn(legacy_source_id)["ord"]
+    legacy_memory_ord = m.store.memory(memory_id)["created_ord"]
+
+    summary = m.remember("s", [{
+        "id": legacy_source_id,
+        "role": "user",
+        "text": text,
+    }], user="alice")
+
+    assert summary["provenance"][0]["source_ids"] == [legacy_source_id]
+    assert len(m.store.memories(layer="L1", user="alice")) == 1
+    assert m.store.turn(legacy_source_id)["ord"] == legacy_turn_ord
+    assert m.store.memory(memory_id)["created_ord"] == legacy_memory_ord
+    assert check_memory(m.store, memory_id).verdict == MATCH
+
+
+def test_default_user_legacy_citation_makes_named_reimport_use_partitioned_source():
+    m = AgentMemory(":memory:")
+    text = "I live in Denver."
+    legacy_source_id = "turn-1"
+    m.store.add_turn(legacy_source_id, "s", "user", text)
+    m.store.add_memory(
+        "default-note",
+        "L1",
+        "default-user note from turn-1",
+        [legacy_source_id],
+        "fixture/v1",
+        "fixture criterion",
+        session="s",
+        user="",
+    )
+    [(memory_id, atom)] = extract_atoms(
+        [{"id": legacy_source_id, "role": "user", "text": text}],
+        m.extractor,
+    )
+    m.store.add_memory(
+        memory_id,
+        "L1",
+        atom.text,
+        [atom.source_id],
+        m.extractor.name,
+        "atomic user fact",
+        session="s",
+        user="alice",
+    )
+
+    summary = m.remember("s", [{
+        "id": legacy_source_id,
+        "role": "user",
+        "text": text,
+    }], user="alice")
+
+    source_id = summary["provenance"][0]["source_ids"][0]
+    assert source_id != legacy_source_id
+    assert source_id.startswith("src:v1:")
+    assert m.store.turn(legacy_source_id)["text"] == text
+    assert m.store.memory("default-note")["user"] == ""
+
+
+def test_repeated_current_import_does_not_advance_source_or_memory_ordinals():
+    m = AgentMemory(":memory:")
+    first = m.remember("s", [{
+        "id": "turn-1",
+        "role": "user",
+        "text": "I live in Denver.",
+    }], user="alice")
+    source_id = first["provenance"][0]["source_ids"][0]
+    memory_id = first["provenance"][0]["memory_id"]
+    turn_ord = m.store.turn(source_id)["ord"]
+    memory_ord = m.store.memory(memory_id)["created_ord"]
+
+    second = m.remember("s", [{
+        "id": "turn-1",
+        "role": "user",
+        "text": "I live in Denver.",
+    }], user="alice")
+
+    assert second["provenance"][0]["memory_id"] == memory_id
+    assert second["provenance"][0]["source_ids"] == [source_id]
+    assert m.store.turn(source_id)["ord"] == turn_ord
+    assert m.store.memory(memory_id)["created_ord"] == memory_ord
+    assert check_memory(m.store, memory_id).verdict == MATCH
+
+
+def test_memory_id_collision_is_rejected_before_source_turn_write():
+    m = AgentMemory(":memory:")
+    text = "I live in Denver."
+    [(memory_id, atom)] = extract_atoms(
+        [{"id": "turn-1", "role": "user", "text": text}],
+        m.extractor,
+    )
+    m.store.add_memory(
+        memory_id,
+        "L1",
+        atom.text,
+        [atom.source_id],
+        m.extractor.name,
+        "atomic user fact",
+        session="s",
+        user="bob",
+    )
+
+    with pytest.raises(ValueError, match="already owned by user"):
+        m.remember("s", [{
+            "id": "turn-1",
+            "role": "user",
+            "text": text,
+        }])
+
+    assert m.store.turns() == []
+    assert m.store.memory(memory_id)["user"] == "bob"
+
+
+def test_conflicting_duplicate_turn_id_batch_is_rejected_without_partial_writes():
+    m = AgentMemory(":memory:")
+
+    with pytest.raises(ValueError, match="conflicting turn id"):
+        m.remember("session-a", [
+            {"id": "turn-1", "role": "user", "text": "I prefer Alpha notes."},
+            {"id": "turn-1", "role": "user", "text": "I prefer Beta notes."},
+        ], user="user-a")
+
+    assert m.store.turns() == []
+    assert m.store.memories(layer="L1") == []
+
+
+def test_invalid_turn_batch_is_rejected_without_partial_writes():
+    m = AgentMemory(":memory:")
+
+    with pytest.raises(ValueError, match="turn 1 missing required field 'text'"):
+        m.remember("session-a", [
+            {"id": "turn-1", "role": "user", "text": "I prefer Alpha notes."},
+            {"id": "turn-2", "role": "user"},
+        ], user="user-a")
+
+    assert m.store.turns() == []
+    assert m.store.memories(layer="L1") == []

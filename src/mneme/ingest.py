@@ -22,6 +22,11 @@ import re
 
 from .extract import extract_atoms
 from .receipt import content_hash
+from .source import (
+    GATHER_SOURCE_NAMESPACE,
+    plan_source_turns,
+    preflight_memory_writes,
+)
 
 _L1_CRITERION = "atomic user fact"
 _REQUIRED = ("text",)
@@ -46,11 +51,11 @@ def _origin(item: dict) -> dict:
 
 
 def from_gather(memory, items: list[dict], session: str,
-                *, role: str = "source") -> dict:
+                *, role: str = "source", user: str = "") -> dict:
     """Ingest intake items into memory, binding each item's origin receipt to the
     turn it becomes, then extracting atoms. Returns a summary with per-atom
     provenance that chains back to the source. Idempotent by content id."""
-    turn_rows = []
+    candidates = []
     skipped = []
     for i, item in enumerate(items):
         if any(k not in item or not str(item.get(k, "")).strip() for k in _REQUIRED):
@@ -59,28 +64,60 @@ def from_gather(memory, items: list[dict], session: str,
         text = str(item["text"])
         origin = _origin(item)
         tid = str(item.get("id") or content_hash(session, str(i), origin["sha256"], text)[:16])
-        memory.store.add_turn(tid, session, role, text, origin=origin)
-        # the turn is stored honestly as role="source" (its origin receipt names
-        # the web source); for extraction it is treated as extractable content,
-        # since gathered research IS facts to remember, not conversational noise
-        turn_rows.append({"id": tid, "role": "user", "text": text})
+        candidates.append({
+            "id": tid,
+            "role": role,
+            "text": text,
+            "origin": origin,
+            "identity_parts": (origin["sha256"],),
+        })
+    planned = plan_source_turns(
+        memory.store,
+        session,
+        candidates,
+        user=user,
+        namespace=GATHER_SOURCE_NAMESPACE,
+    )
+    # the turn is stored honestly as role="source" (its origin receipt names the
+    # web source); for extraction it is treated as extractable content, since
+    # gathered research IS facts to remember, not conversational noise
+    turn_rows = [t.extraction_row(role="user") for t in planned]
     atoms = extract_atoms(turn_rows, memory.extractor)
+    preflight_memory_writes(
+        memory.store,
+        atoms,
+        criterion=_L1_CRITERION,
+        user=user,
+    )
+    for turn in planned:
+        if turn.write:
+            memory.store.add_turn(
+                turn.id,
+                session,
+                turn.role,
+                turn.text,
+                origin=turn.origin,
+            )
     receipts = []
     for aid, atom in atoms:
         memory.store.add_memory(aid, "L1", atom.text, [atom.source_id],
-                                memory.extractor.name, _L1_CRITERION, session=session)
+                                memory.extractor.name, _L1_CRITERION,
+                                session=session, user=user)
         receipts.append({"memory_id": aid, "source_turn": atom.source_id})
-    return {"session": session, "ingested": len(turn_rows), "skipped": skipped,
+    return {"session": session, "user": user, "ingested": len(turn_rows),
+            "skipped": skipped,
             "atoms": len(receipts), "provenance": receipts,
             "note": "each atom's source turn carries its gather origin receipt; "
                     "walk it with provenance_chain(memory_id)"}
 
 
 def provenance_chain(memory, memory_id: str) -> dict | None:
-    """Walk the full chain for a memory: atom -> source turn(s) -> external origin
-    receipt (the web source and the content hash fetched). Returns None if the
-    memory is absent. The chain is re-checkable: re-fetch the ref, re-hash, and
-    confirm it still equals the origin sha256."""
+    """Walk the full chain for a memory: atom -> source turn(s) -> origin.
+
+    Gather origins include the web source and content hash fetched. Named-user
+    native turns may include only internal source-partition metadata and remain
+    not externally grounded. Returns None if the memory is absent.
+    """
     prov = memory.store.provenance(memory_id)
     if prov is None:
         return None
@@ -92,7 +129,7 @@ def provenance_chain(memory, memory_id: str) -> dict | None:
             "turn_id": sid,
             "turn_present": turn is not None,
             "turn_text": turn["text"] if turn else None,
-            "origin": origin,      # {source, ref, method, sha256} or None (native turn)
+            "origin": origin,      # external receipt, internal metadata, or None
         })
     # fail closed: a memory with no source links is NOT externally grounded (all()
     # over an empty list is vacuously true), and a self-declared origin hash that
