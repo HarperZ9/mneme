@@ -265,29 +265,83 @@ def test_local_origin_recheck_rejects_ancestor_replaced_after_validation(tmp_pat
 
 @pytest.mark.skipif(os.name == "nt" or not hasattr(os, "mkfifo"),
                     reason="POSIX FIFO liveness control")
-def test_local_origin_recheck_rejects_fifo_replacement_without_blocking(tmp_path, monkeypatch):
-    import signal
+def test_local_origin_recheck_rejects_fifo_replacement_without_blocking(tmp_path):
+    import subprocess
 
-    mem, memory_id, source, allowed = _ingest_local_doc(tmp_path)
-    original_safe_path = origin_module._safe_origin_path
+    child = r'''
+import hashlib
+import json
+import os
+import signal
+import sys
+from pathlib import Path
 
-    def race_after_validation(ref, allowed_root):
-        result = original_safe_path(ref, allowed_root)
+sys.path.insert(0, sys.argv[2])
+
+from mneme import AgentMemory
+import mneme.origin as origin_module
+
+if os.open not in getattr(os, "supports_dir_fd", set()):
+    print(json.dumps({"skip": "os.open dir_fd is unavailable"}))
+    raise SystemExit(0)
+
+tmp_path = Path(sys.argv[1])
+allowed = tmp_path / "allowed"
+allowed.mkdir()
+source = allowed / "note.txt"
+text = "I use FIFO swap liveness controls."
+source.write_text(text, encoding="utf-8")
+mem = AgentMemory(":memory:")
+summary = mem.ingest_gather("research", [{
+    "id": "doc-1",
+    "text": text,
+    "source": "docs",
+    "ref": str(source),
+    "method": "file-read",
+    "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+}])
+memory_id = summary["provenance"][0]["memory_id"]
+original_open = origin_module.os.open
+state = {"swapped": False}
+
+def hooked_open(path, flags, *args, **kwargs):
+    if (not state["swapped"]
+            and kwargs.get("dir_fd") is not None
+            and os.fspath(path) == source.name):
+        state["swapped"] = True
         source.unlink()
         os.mkfifo(source)
-        return result
+    return original_open(path, flags, *args, **kwargs)
 
-    def timeout(_signum, _frame):
-        raise TimeoutError("origin recheck blocked opening a swapped FIFO")
+def timeout(_signum, _frame):
+    raise TimeoutError("origin recheck blocked opening a swapped FIFO")
 
-    monkeypatch.setattr(origin_module, "_safe_origin_path", race_after_validation)
-    signal.signal(signal.SIGALRM, timeout)
-    signal.alarm(2)
-    try:
-        report = mem.recheck_local_origin(memory_id, allowed_root=allowed)
-    finally:
-        signal.alarm(0)
+origin_module.os.open = hooked_open
+old_handler = signal.getsignal(signal.SIGALRM)
+signal.signal(signal.SIGALRM, timeout)
+signal.alarm(2)
+try:
+    report = mem.recheck_local_origin(memory_id, allowed_root=allowed)
+finally:
+    signal.alarm(0)
+    signal.signal(signal.SIGALRM, old_handler)
+    origin_module.os.open = original_open
 
+report["swapped"] = state["swapped"]
+print(json.dumps(report))
+'''
+    proc = subprocess.run(
+        [sys.executable, "-c", child, str(tmp_path),
+         str(Path(__file__).resolve().parents[1] / "src")],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+    report = json.loads(proc.stdout)
+    if "skip" in report:
+        pytest.skip(report["skip"])
+    assert report["swapped"] is True
     assert report["overall"] == "UNVERIFIABLE"
     assert ("changed during validation/open" in report["origins"][0]["reason"]
             or "not a regular file" in report["origins"][0]["reason"])
