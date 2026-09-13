@@ -317,6 +317,7 @@ def timeout(_signum, _frame):
     raise TimeoutError("origin recheck blocked opening a swapped FIFO")
 
 origin_module.os.open = hooked_open
+os.supports_dir_fd.add(hooked_open)
 old_handler = signal.getsignal(signal.SIGALRM)
 signal.signal(signal.SIGALRM, timeout)
 signal.alarm(2)
@@ -326,6 +327,7 @@ finally:
     signal.alarm(0)
     signal.signal(signal.SIGALRM, old_handler)
     origin_module.os.open = original_open
+    os.supports_dir_fd.discard(hooked_open)
 
 report["swapped"] = state["swapped"]
 print(json.dumps(report))
