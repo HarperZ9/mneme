@@ -1,9 +1,10 @@
 """mcp.py — mneme over MCP stdio, so an agent can use accountable memory directly.
 
-The server exposes tools for remember, recall, drift, provenance, forget, audit,
-status, and doctor. Recall returns its re-derivable RecallReceipt as the tool
-result, so an agent or operator can see and re-check why a memory was surfaced.
-The implementation is zero-dependency JSON-RPC 2.0 over stdio.
+The server exposes tools for remember, recall, drift, provenance, local origin
+recheck, forget, audit, status, and doctor. Recall returns its re-derivable
+RecallReceipt as the tool result, so an agent or operator can see and re-check
+why a memory was surfaced. The implementation is zero-dependency JSON-RPC 2.0
+over stdio.
 
 The DB path comes from the MNEME_STATE env var (default mneme.db), so a host
 config points one server at one memory store.
@@ -67,9 +68,18 @@ def _tool_defs() -> list[dict]:
          "inputSchema": {"type": "object", "properties": {
              "layer": {"type": "string", "description": "L1 (default), L2, L3"}}}},
         {"name": "mneme.provenance",
-         "description": "Show a memory's provenance receipt (sources, extractor, hash).",
-         "inputSchema": {"type": "object", "required": ["memory_id"],
-             "properties": {"memory_id": {"type": "string"}}}},
+          "description": "Show a memory's provenance receipt (sources, extractor, hash).",
+          "inputSchema": {"type": "object", "required": ["memory_id"],
+              "properties": {"memory_id": {"type": "string"}}}},
+        {"name": "mneme.origin_recheck",
+         "description": "Opt-in local origin freshness check for supported "
+                        "Gather docs/file-read receipts under an allowed root.",
+         "inputSchema": {"type": "object", "required": ["memory_id", "allowed_root"],
+             "properties": {
+                 "memory_id": {"type": "string"},
+                 "allowed_root": {"type": "string"},
+                 "profile": {"type": "string",
+                             "description": "default gather.docs.file-read/v1"}}}},
         {"name": "mneme.forget",
          "description": "Delete a memory, leaving an auditable tombstone (what "
                         "was forgotten, its hash, why).",
@@ -105,6 +115,18 @@ def call_tool(name: str, args: dict) -> str:
             info["state_path"] = _state_path()
             info["tools"] = [t["name"] for t in _tool_defs()]
         return json.dumps(info, indent=2, ensure_ascii=False)
+    if name == "mneme.origin_recheck":
+        _reject_unknown(args, {"memory_id", "allowed_root", "profile"})
+        mem = AgentMemory(_state_path(), read_only=True)
+        try:
+            report = mem.recheck_local_origin(
+                str(args["memory_id"]),
+                allowed_root=str(args["allowed_root"]),
+                profile=(str(args["profile"]) if "profile" in args else None),
+            )
+        finally:
+            mem.close()
+        return json.dumps(report, indent=2, ensure_ascii=False)
     mem = AgentMemory(_state_path())
     if name == "mneme.remember":
         _reject_unknown(args, {"session", "turns", "user"})

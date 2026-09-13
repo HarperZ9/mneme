@@ -1,14 +1,15 @@
 """ingest.py — the ecosystem composition: research intake -> accountable memory,
-with a provenance chain from the web source to the recalled memory.
+with a provenance chain from an intake receipt to the recalled memory.
 
 When Mneme ingests items from an accountable intake tool such as Gather, it
-binds each item's origin receipt (source, ref/url, method, content sha256) to
-the memory it becomes. The chain is then re-checkable end to end:
+binds each item's origin receipt (source, ref, method, content sha256) to the
+memory it becomes. The chain is then inspectable end to end:
 
-    web url --(gather sha256)--> mneme turn --> mneme atom --> recall receipt
+    origin ref --(intake sha256)--> mneme turn --> mneme atom --> recall receipt
 
-The recalled memory can trace back to the bytes and source reference recorded
-by the intake item, subject to later re-fetch/re-hash checks of that source.
+The recalled memory can trace back to the receipt recorded by the intake item.
+Freshness against the external source is a separate opt-in recheck and is only
+available for supported profiles.
 
 Zero-dep and decoupled: gather items arrive as plain dicts (mneme never imports
 gather), so any intake tool that emits {id, text, source, ref, method, sha256}
@@ -34,7 +35,8 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 def _origin_receipt_present(origin: dict | None) -> bool:
     """A well-formed origin receipt: a fetchable ref AND a content hash that is
     at least shaped like a sha256. This is presence-of-a-checkable-receipt, not
-    proof — the recheck (re-fetch, re-hash, compare) is what fully verifies."""
+    proof. A supported local-origin recheck is what tests current external
+    source freshness."""
     return bool(origin) and bool(origin.get("ref")) and bool(
         _SHA256.match(origin.get("sha256", "")))
 
@@ -112,9 +114,9 @@ def from_gather(memory, items: list[dict], session: str,
 def provenance_chain(memory, memory_id: str) -> dict | None:
     """Walk the full chain for a memory: atom -> source turn(s) -> origin.
 
-    Gather origins include the web source and content hash fetched. Named-user
-    native turns may include only internal source-partition metadata and remain
-    not externally grounded. Returns None if the memory is absent.
+    Gather origins include the supplied source reference and intake content hash.
+    Named-user native turns may include only internal source-partition metadata
+    and remain not externally grounded. Returns None if the memory is absent.
     """
     prov = memory.store.provenance(memory_id)
     if prov is None:
@@ -138,5 +140,8 @@ def provenance_chain(memory, memory_id: str) -> dict | None:
             "criterion": prov.criterion, "extractor": prov.extractor,
             "chain": links,
             "externally_grounded": grounded,
-            "recheck": ("re-fetch each origin.ref, re-hash the content, confirm it "
-                        "equals origin.sha256 -> the memory provably traces to the source")}
+            "origin_receipt_present": grounded,
+            "external_freshness_verified": False,
+            "recheck": ("mneme origin-recheck MEMORY_ID --allowed-root DIR for "
+                        "supported local docs/file-read origins; legacy chains "
+                        "with no extraction profile do not prove raw byte integrity")}
