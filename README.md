@@ -6,10 +6,10 @@
 > memories, returns recall receipts that reproduce ranking, and detects source
 > drift when checks run.
 
-**Install from the versioned GitHub wheel after the v0.3.0 tag/release is published**:
+**Install from the versioned GitHub wheel after the v0.4.0 tag/release is published**:
 
 ```bash
-python -m pip install "https://github.com/HarperZ9/mneme/releases/download/v0.3.0/mneme_memory-0.3.0-py3-none-any.whl"
+python -m pip install "https://github.com/HarperZ9/mneme/releases/download/v0.4.0/mneme_memory-0.4.0-py3-none-any.whl"
 ```
 
 For a source install from the current GitHub branch:
@@ -144,8 +144,10 @@ traces to the receipt supplied by its intake tool. For supported local Gather
 docs receipts, `origin-recheck` can re-read the operator-approved file under
 `--allowed-root` and compare Gather's normalized decoded text hash. Legacy
 receipts do not prove raw byte integrity, and unsupported refs remain
-`UNVERIFIABLE` rather than silently promoted. Any intake tool that emits the
-receipt shape composes; mneme never imports gather. Named-user `remember` and
+`UNVERIFIABLE` rather than silently promoted. `origin-recheck` opens Mneme state
+read-only, refuses local path aliases and unsupported refs, and reports `MATCH`,
+`DRIFT`, or `UNVERIFIABLE` without including source content in the report.
+Any intake tool that emits the receipt shape composes; mneme never imports gather. Named-user `remember` and
 Gather ingest derive source turn IDs from the user, session, supplied item/turn
 ID, and for Gather the origin hash. The shared default user keeps the legacy
 raw-ID namespace, except new default-user writes cannot use Mneme's reserved

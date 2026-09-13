@@ -23,10 +23,17 @@
       "consumable_as": []
     },
     {
+      "capability": "mneme.local-origin-recheck/1",
+      "title": "supported local origin freshness report",
+      "module": "src/mneme/origin.py:recheck_local_origins",
+      "summary": "explicit read-only local docs/file-read freshness checks under a caller-approved root",
+      "consumable_as": []
+    },
+    {
       "capability": "mneme.provenance-chain/1",
       "title": "memory -> source origin",
       "module": "src/mneme/ingest.py:provenance_chain",
-      "summary": "",
+      "summary": "memory-to-origin receipt chain; external freshness is checked separately when supported",
       "consumable_as": []
     },
     {
@@ -70,6 +77,7 @@
   "evidence": [
     "src/mneme/compose.py",
     "src/mneme/ingest.py",
+    "src/mneme/origin.py",
     "src/mneme/receipt.py",
     "src/mneme/drift.py",
     "src/mneme/replay.py",

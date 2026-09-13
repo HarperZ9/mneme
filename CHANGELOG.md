@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.0 (2026-09-13)
+
+Additive release for explicit local origin freshness checks.
+
+- Add `mneme origin-recheck MEMORY_ID --allowed-root DIR` plus
+  `AgentMemory.recheck_local_origin(...)` and MCP `mneme.origin_recheck` for
+  opt-in freshness checks of supported Gather `docs` / `file-read` receipts.
+- Keep internal `drift()` semantics stable: stored-memory/source consistency is
+  still separate from re-reading an external local origin.
+- Compare Gather's normalized decoded text profile (`gather.docs.file-read/v1`),
+  not raw bytes; legacy or unsupported origins return `UNVERIFIABLE` rather than
+  becoming source-freshness proof.
+- Open origin rechecks against Mneme state read-only and reject unsafe local path
+  aliases, oversized reads, unsupported refs, invalid UTF-8 for the profile, and
+  validation/open races.
+- Preserve Crucible replay boundaries: replay still verifies sealed Mneme drift
+  measurements from caller-owned SQLite snapshots and does not independently
+  re-read external sources.
+
+This is an additive release. It does not claim complete enterprise readiness,
+network origin fetching, raw-byte integrity for Gather docs receipts, or new
+database migrations.
+
 ## 0.3.0 (2026-09-07)
 
 Release-prep candidate for source-turn partitioning and Gather interop.
@@ -56,7 +79,7 @@ benchmark, and accountable forgetting.
 - **Token-economics benchmark** — reduction AND answer-recall, re-derivable
   (built-in scenario: 76.6% reduction at 100% answer-recall).
 - **Ecosystem composition** — ingest gather items so a recalled memory traces
-  to its web source (`mneme chain`); export schema-v2 Mneme drift measurements
+  to its origin receipt (`mneme chain`); export schema-v2 Mneme drift measurements
   for Crucible to recompute and seal `MATCH`/`DRIFT`/`UNVERIFIABLE`. Independent
   source re-reading uses assessment-bound `mneme.recheck/1` descriptors and the
   zero-dependency `mneme replay-crucible` pack producer; descriptors contain no
@@ -94,6 +117,6 @@ benchmark, and accountable forgetting.
   Win32 aliases and are accepted.
 - **White-box inspector** — a self-contained HTML view of every layer with
   provenance, drift, and the audit log (`mneme inspect`).
-- **MCP server** — 6 tools over stdio; **runnable tour** (`examples/tour.py`).
+- **MCP server** — tools over stdio; **runnable tour** (`examples/tour.py`).
 - Zero runtime dependencies (stdlib sqlite3); deterministic; 100+ tests; CI on
   3 OS × 3 Python + a wheel-install job.
