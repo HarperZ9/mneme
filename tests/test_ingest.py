@@ -1,11 +1,12 @@
 """Falsifiers for the ecosystem composition: gather intake -> mneme memory with
-an unbroken, re-checkable provenance chain from the web source to the memory.
+an unbroken provenance chain from the intake receipt to the memory.
 
 Load-bearing: (1) a memory ingested from gather traces back through its source
-turn to the origin receipt (source, ref/url, sha256); (2) the chain is honest
-about native (non-external) turns; (3) a malformed item is skipped with a
-reason, never guessed. Includes a real gather Item when Gather is installed or
-configured with MNEME_GATHER_SRC.
+turn to the origin receipt (source, ref/url, sha256); (2) receipt presence is
+not mislabeled as current external freshness; (3) native turns are not reported
+as externally grounded; (4) a malformed item is skipped with a reason, never
+guessed. Includes a real gather Item when Gather is installed or configured
+with MNEME_GATHER_SRC.
 """
 from __future__ import annotations
 
@@ -32,7 +33,7 @@ GATHER_ITEMS = [
 ]
 
 
-def test_ingested_memory_chains_back_to_the_web_source():
+def test_ingested_memory_chains_back_to_the_origin_receipt():
     m = AgentMemory(":memory:")
     summary = m.ingest_gather("research", GATHER_ITEMS)
     assert summary["atoms"] >= 2
@@ -42,7 +43,9 @@ def test_ingested_memory_chains_back_to_the_web_source():
     link = chain["chain"][0]
     assert link["origin"]["ref"].startswith("https://")   # the web url survives
     assert link["origin"]["sha256"] and link["origin"]["source"] == "web"
-    assert "re-fetch" in chain["recheck"]                 # the chain is re-checkable
+    assert chain["origin_receipt_present"] is True
+    assert chain["external_freshness_verified"] is False
+    assert "origin-recheck" in chain["recheck"]           # freshness is explicit and opt-in
 
 
 def test_native_turn_memory_is_honestly_not_externally_grounded():

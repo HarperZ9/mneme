@@ -129,23 +129,27 @@ Point mneme at an accountable intake tool ([gather](https://github.com/HarperZ9/
 the sibling flagship) and the provenance chain can run end to end:
 
 ```
-web url --(gather sha256)--> mneme turn --> mneme atom --> recall
+origin ref --(intake sha256)--> mneme turn --> mneme atom --> recall
 ```
 
 ```bash
 mneme ingest research items.json --user alice     # gather-shaped {id,text,source,ref,method,sha256}
 mneme recall "where is the user based" --user alice
-mneme chain <memory_id>              # -> the web url + content hash it came from
+mneme chain <memory_id>              # -> the supplied origin ref + intake hash
+mneme origin-recheck <memory_id> --allowed-root docs/
 ```
 
 An agent that remembers what it researched, and can prove a recalled memory
-traces to the exact bytes fetched from the exact source (`re-fetch the ref,
-re-hash, confirm it equals the origin sha256`). Any intake tool that emits that
-shape composes; mneme never imports gather. Named-user `remember` and Gather
-ingest derive source turn IDs from the user, session, supplied item/turn ID, and
-for Gather the origin hash. The shared default user keeps the legacy raw-ID
-namespace, except new default-user writes cannot use Mneme's reserved internal
-source ID prefix.
+traces to the receipt supplied by its intake tool. For supported local Gather
+docs receipts, `origin-recheck` can re-read the operator-approved file under
+`--allowed-root` and compare Gather's normalized decoded text hash. Legacy
+receipts do not prove raw byte integrity, and unsupported refs remain
+`UNVERIFIABLE` rather than silently promoted. Any intake tool that emits the
+receipt shape composes; mneme never imports gather. Named-user `remember` and
+Gather ingest derive source turn IDs from the user, session, supplied item/turn
+ID, and for Gather the origin hash. The shared default user keeps the legacy
+raw-ID namespace, except new default-user writes cannot use Mneme's reserved
+internal source ID prefix.
 
 And the loop closes at the other end. `mneme to-crucible` emits a schema-v2
 [crucible](https://github.com/HarperZ9/crucible) export: each memory is a claim
@@ -240,10 +244,11 @@ before/after hash. Tamper a tombstone and the chain breaks.
 mneme mcp          # JSON-RPC 2.0 over stdio; MNEME_STATE points at the DB
 ```
 
-Tools: `mneme.remember`, `mneme.recall`, `mneme.drift`, `mneme.provenance`. A
-recall through MCP returns the same re-derivable receipt, so the agent (or its
-operator) can see and re-check why a memory was surfaced; the accountability
-travels with the tool result.
+Tools: `mneme.remember`, `mneme.recall`, `mneme.drift`, `mneme.provenance`,
+`mneme.origin_recheck`, `mneme.forget`, `mneme.audit`, `mneme.status`, and
+`mneme.doctor`. A recall through MCP returns the same re-derivable receipt, so
+the agent (or its operator) can see and re-check why a memory was surfaced; the
+accountability travels with the tool result.
 
 ## Benchmark you can re-run
 

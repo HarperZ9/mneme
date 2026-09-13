@@ -125,15 +125,34 @@ class AgentMemory:
     # -- ecosystem composition ----------------------------------------------
     def ingest_gather(self, session: str, items: list[dict], user: str = "") -> dict:
         """Ingest accountable-intake items (gather's shape) into memory, binding
-        each item's origin receipt so the memory traces to its web source."""
+        each item's origin receipt so the memory can be traced and explicitly
+        rechecked against supported local origins."""
         from .ingest import from_gather
         return from_gather(self, items, session, user=user)
 
     def provenance_chain(self, memory_id: str) -> dict | None:
         """The full re-checkable chain for a memory: atom -> source turn ->
-        external origin receipt (web source + content hash)."""
+        origin receipt when one was supplied."""
         from .ingest import provenance_chain
         return provenance_chain(self, memory_id)
+
+    def recheck_local_origin(self, memory_id: str, *,
+                             allowed_root: str | Path,
+                             profile: str | None = None) -> dict:
+        """Opt-in external freshness check for supported local origin receipts.
+
+        This is separate from ``drift()``, which checks consistency inside the
+        Mneme store. The local-origin check re-reads only caller-approved local
+        files whose receipt profile is supported.
+        """
+        from .origin import GATHER_DOCS_FILE_READ_PROFILE, recheck_local_origins
+
+        return recheck_local_origins(
+            self,
+            memory_id,
+            allowed_root=allowed_root,
+            profile=profile or GATHER_DOCS_FILE_READ_PROFILE,
+        )
 
     def to_crucible(self, session: str | None = None, layer: str = "L1") -> dict:
         """Export memories as a crucible thesis + drift-derived measurements, so

@@ -277,6 +277,17 @@ def build_parser() -> argparse.ArgumentParser:
     ch.add_argument("memory_id")
     ch.set_defaults(func=cmd_chain)
 
+    orc = sub.add_parser(
+        "origin-recheck",
+        help="re-read a supported local origin under an allowed root",
+    )
+    orc.add_argument("memory_id")
+    orc.add_argument("--allowed-root", required=True,
+                     help="directory under which local origin files may be read")
+    orc.add_argument("--profile", default=None,
+                     help="origin extraction profile (default: gather.docs.file-read/v1)")
+    orc.set_defaults(func=cmd_origin_recheck)
+
     sup = sub.add_parser("supersede", help="record that a fact CHANGED (keeps the old for history)")
     sup.add_argument("memory_id")
     sup.add_argument("text")
@@ -370,6 +381,27 @@ def cmd_chain(args) -> int:
         return 2
     print(json.dumps(chain, indent=2))
     return 0
+
+
+def cmd_origin_recheck(args) -> int:
+    memory = None
+    try:
+        memory = AgentMemory(args.state, read_only=True)
+        report = memory.recheck_local_origin(
+            args.memory_id,
+            allowed_root=args.allowed_root,
+            profile=args.profile,
+        )
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        print(f"origin-recheck failed: {exc.__class__.__name__}", file=sys.stderr)
+        return 1
+    finally:
+        if memory is not None:
+            cleanup_warning = memory.close()
+            if cleanup_warning is not None:
+                print(f"warning: {cleanup_warning}", file=sys.stderr)
+    print(json.dumps(report, indent=2))
+    return 0 if report["overall"] == "MATCH" else 1
 
 
 def cmd_supersede(args) -> int:
