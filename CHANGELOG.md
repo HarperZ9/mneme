@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.4.0 (unreleased)
+## 0.4.0 (2026-09-13)
 
-Release-prep candidate for explicit local origin freshness checks.
+Additive release for explicit local origin freshness checks.
 
 - Add `mneme origin-recheck MEMORY_ID --allowed-root DIR` plus
   `AgentMemory.recheck_local_origin(...)` and MCP `mneme.origin_recheck` for

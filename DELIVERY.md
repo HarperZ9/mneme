@@ -1,10 +1,12 @@
 # Delivery checklist — mneme releases
 
-## 0.4.0 release-prep candidate (2026-09-13)
+## 0.4.0 release preparation (2026-09-13)
 
-This is a reviewed candidate for an additive release after PR #13. It prepares
-versioned source and package metadata only; tagging, GitHub release publication,
-and PyPI publishing remain held for operator review.
+This record binds the checked gates for the additive local-origin freshness
+release prepared after PR #13. The current branch is not yet published: release
+requires merge to `main`, exact-head CI, a `v0.4.0` tag or GitHub Release event,
+and the release workflow gates below. PyPI remains controlled by the repository
+`PYPI_ENABLED` variable and PyPI trusted publishing.
 
 Preflight scope:
 
@@ -27,6 +29,15 @@ Release boundary:
   caller-owned SQLite snapshot. It does not become external source
   certification.
 - This checklist does not claim full enterprise completeness.
+
+Publication notes:
+
+- `.github/workflows/release.yml` builds, verifies version/tag alignment,
+  installs the wheel, smokes `mneme --version` and `mneme bench`, and uploads
+  `dist/` as a GitHub Actions artifact. It does not attach the wheel or sdist
+  to a GitHub Release page.
+- For the final `v0.4.0` GitHub Release, attach checked wheel/sdist assets
+  explicitly and verify their hashes against the release-build receipt.
 
 ## 0.1.0 historical delivery note
 
