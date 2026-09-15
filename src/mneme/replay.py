@@ -145,6 +145,11 @@ def _replay_binding(value: object,
     if type(skipped_count) is not int or skipped_count < 0:
         raise ReplayBindingError(
             "replay binding skipped_count must be a non-negative integer")
+    if skipped_count > 0:
+        raise ReplayBindingError(
+            "replay binding skipped rows require a verifier-enforced full "
+            "denominator; this template does not bind undisclosed rows to the "
+            "assessment")
     sha256 = binding["sha256"]
     if (not isinstance(sha256, str) or len(sha256) != 64
             or any(char not in "0123456789abcdef" for char in sha256)):
@@ -157,6 +162,21 @@ def _replay_binding(value: object,
         raise ReplayBindingError(
             "replay binding sha256 mismatch: replay rows were omitted or tampered")
     return dict(binding)
+
+
+def _validate_assessment_measurement_seal(
+        assessment: Mapping[str, object],
+        sealed_rows: list[Mapping[str, object]]) -> None:
+    try:
+        reproduced_measurement_seal = _measurement_seal(sealed_rows)
+    except (TypeError, ValueError, UnicodeError) as exc:
+        raise ReplayBindingError(
+            "assessment measurement seal binding is not canonically encodable"
+        ) from exc
+    if reproduced_measurement_seal != assessment["measurement_seal"]:
+        raise ReplayBindingError(
+            "assessment measurement seal binding mismatch: replay rows were "
+            "omitted or tampered")
 
 
 def replay_crucible(store, template: Mapping[str, object]) -> dict:
@@ -271,17 +291,10 @@ def _replay_crucible_snapshot(store, template: Mapping[str, object]) -> dict:
     if has_replay_binding:
         replay_binding = _replay_binding(
             template.get("replay_binding"), binding_rows)
+        if replay_binding["skipped_count"] == 0:
+            _validate_assessment_measurement_seal(assessment, sealed_rows)
     else:
-        try:
-            reproduced_measurement_seal = _measurement_seal(sealed_rows)
-        except (TypeError, ValueError, UnicodeError) as exc:
-            raise ReplayBindingError(
-                "assessment measurement seal binding is not canonically encodable"
-            ) from exc
-        if reproduced_measurement_seal != assessment["measurement_seal"]:
-            raise ReplayBindingError(
-                "assessment measurement seal binding mismatch: replay rows were "
-                "omitted or tampered")
+        _validate_assessment_measurement_seal(assessment, sealed_rows)
 
     replayed = []
     for memory_id, descriptor, expected in validated:

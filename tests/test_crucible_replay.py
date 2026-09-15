@@ -206,7 +206,33 @@ def test_replay_rejects_omitted_row_against_replay_binding(tmp_path):
         replay_crucible(memory.store, template)
 
 
-def test_replay_supports_mixed_assessment_without_legacy_row_disclosure(tmp_path):
+def test_replay_rejects_omitted_row_with_recomputed_zero_skip_binding(tmp_path):
+    memory = _state(tmp_path / "mneme.db")
+    template = _template(memory)
+    template["replays"].pop()
+    template["replay_binding"] = _replay_binding(
+        template["replays"], skipped_count=0)
+
+    with pytest.raises(
+            ReplayBindingError,
+            match="assessment measurement seal binding"):
+        replay_crucible(memory.store, template)
+
+
+def test_replay_rejects_omitted_row_with_recomputed_positive_skip_binding(tmp_path):
+    memory = _state(tmp_path / "mneme.db")
+    template = _template(memory)
+    template["replays"].pop()
+    template["replay_binding"] = _replay_binding(
+        template["replays"], skipped_count=1)
+
+    with pytest.raises(
+            ReplayBindingError,
+            match="skipped rows require a verifier-enforced full denominator"):
+        replay_crucible(memory.store, template)
+
+
+def test_replay_rejects_mixed_assessment_without_full_denominator_seal(tmp_path):
     memory = _state(tmp_path / "mneme.db")
     template = _template(memory)
     template["replay_binding"] = _replay_binding(
@@ -215,11 +241,10 @@ def test_replay_supports_mixed_assessment_without_legacy_row_disclosure(tmp_path
     # cannot be reproduced from the five disclosed descriptor rows.
     template["assessment"]["measurement_seal"] = _sha("opaque mixed assessment")
 
-    pack = replay_crucible(memory.store, template)
-
-    assert len(pack["replays"]) == 5
-    assert pack["replay_binding"]["skipped_count"] == 1
-    assert "measurement_seal_rows" not in pack
+    with pytest.raises(
+            ReplayBindingError,
+            match="skipped rows require a verifier-enforced full denominator"):
+        replay_crucible(memory.store, template)
 
 
 def test_replay_rejects_private_measurement_seal_rows_context(tmp_path):

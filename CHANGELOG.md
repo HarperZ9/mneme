@@ -1,5 +1,13 @@
 # Changelog
 
+## Source candidate after 0.4.0 (unreleased)
+
+This source tree adds native MCP Crucible export/replay operations after the public `v0.4.0` wheel. Those additions are not in the published `v0.4.0` wheel and must use a source checkout until a matching future release asset exists. No next release version is selected in this docs pass.
+
+- Add source-candidate MCP `mneme.to_crucible` and `mneme.replay_crucible` operations that reuse the existing Mneme export/replay library paths.
+- Keep descriptors declarative: no executable commands, host state paths, or database paths in untrusted replay descriptors.
+- Keep skipped-row replay templates refused until the contract includes a verifier-enforced full denominator for disclosed, skipped, and undisclosed rows.
+
 ## 0.4.0 (2026-09-13)
 
 Additive release for explicit local origin freshness checks.
@@ -51,46 +59,46 @@ First release. Accountable agent memory with layered storage, hybrid
 retrieval, provenance, re-derivable recall, drift checks, a re-derivable
 benchmark, and accountable forgetting.
 
-- **4-tier memory** — L0 turns, L1 atoms (deterministic rule extraction), L2
+- **4-tier memory** - L0 turns, L1 atoms (deterministic rule extraction), L2
   scenarios (union-find clustering), L3 persona; every layer cites its sources.
-- **Hybrid retrieval** — BM25 (pure Python) fused with a vector channel by
+- **Hybrid retrieval** - BM25 (pure Python) fused with a vector channel by
   Reciprocal Rank Fusion; keyword / vector / hybrid. A **zero-dep local n-gram
   vector channel** (`embed="ngram"`) gives fuzzy/morphological matching out of
   the box (no embedding API); a real embedding model plugs in as an edge.
-- **Recency-weighted recall** — prefer recent memories transparently; the
+- **Recency-weighted recall** - prefer recent memories transparently; the
   recency component rides every hit and the rule is in the receipt.
-- **Consolidation** — merge near-duplicate memories (audit-tombstoned) and
+- **Consolidation** - merge near-duplicate memories (audit-tombstoned) and
   surface contradiction candidates without auto-resolving them.
-- **Multi-user / multi-session** — per-tenant isolation (`user=`) and
+- **Multi-user / multi-session** - per-tenant isolation (`user=`) and
   cross-session recall (`user=X, session=None`); one user never recalls another's.
-- **Entity graph** — grounded typed relations (lives_in, works_in, allergic_to,
-  …) + named entities, every edge citing its source atom (drift-checkable).
-- **Temporal memory** — `supersede` keeps a changed fact's old value with a
+- **Entity graph** - grounded typed relations (lives_in, works_in, allergic_to,
+  ...) + named entities, every edge citing its source atom (drift-checkable).
+- **Temporal memory** - `supersede` keeps a changed fact's old value with a
   validity window, so `history` shows the timeline (Denver → Portland → Seattle)
   and `recall(as_of=N)` reconstructs the past; every transition is in the audit
   log. `forget` (GDPR erasure) still removes; `supersede` (a fact changed) keeps.
 - **Provenance receipt** on every memory (sources, extractor, criterion, hash).
-- **Re-derivable recall receipt** — ranked hits with bm25/vector/fused scores
+- **Re-derivable recall receipt** - ranked hits with bm25/vector/fused scores
   and the fusion rule; re-run the scorer, reproduce the ranking.
-- **Self-flagging drift** — a memory whose source changed verdicts DRIFT; a
+- **Self-flagging drift** - a memory whose source changed verdicts DRIFT; a
   missing source is UNVERIFIABLE.
-- **Accountable forgetting** — forget/update leave a hash-chained tombstone;
+- **Accountable forgetting** - forget/update leave a hash-chained tombstone;
   the deletion itself is auditable and tamper-evident.
-- **Token-economics benchmark** — reduction AND answer-recall, re-derivable
+- **Token-economics benchmark** - reduction AND answer-recall, re-derivable
   (built-in scenario: 76.6% reduction at 100% answer-recall).
-- **Ecosystem composition** — ingest gather items so a recalled memory traces
+- **Ecosystem composition** - ingest gather items so a recalled memory traces
   to its origin receipt (`mneme chain`); export schema-v2 Mneme drift measurements
   for Crucible to recompute and seal `MATCH`/`DRIFT`/`UNVERIFIABLE`. Independent
   source re-reading uses assessment-bound `mneme.recheck/1` descriptors and the
   zero-dependency `mneme replay-crucible` pack producer; descriptors contain no
   paths or commands (`mneme to-crucible`).
-- **Tamper-honest source drift** — checks re-hash current turn or cited-memory
+- **Tamper-honest source drift** - checks re-hash current turn or cited-memory
   fields, so direct SQLite byte edits cannot preserve a false `MATCH` by leaving
   a stale stored hash behind.
-- **Strict replay provenance** — one decoder validates source-id lists and
+- **Strict replay provenance** - one decoder validates source-id lists and
   source-hash maps across drift, descriptor, and replay paths, closing JSON shape
   confusion such as `"ab"` versus `["a", "b"]`.
-- **Immutable-snapshot mixed replay** — `replay-crucible` requires a
+- **Immutable-snapshot mixed replay** - `replay-crucible` requires a
   caller-owned, quiescent, single-link rollback-journal snapshot without SQLite
   sidecars. It fingerprints that source around a consistent process-owned
   SQLite backup, reads only the private copy in immutable mode, consumes
@@ -115,8 +123,8 @@ benchmark, and accountable forgetting.
   it resolves onto the state file or a sidecar, or Win32 normalizes it onto a
   different file than it spells. Ordinary `.` and `..` path components are not
   Win32 aliases and are accepted.
-- **White-box inspector** — a self-contained HTML view of every layer with
+- **White-box inspector** - a self-contained HTML view of every layer with
   provenance, drift, and the audit log (`mneme inspect`).
-- **MCP server** — tools over stdio; **runnable tour** (`examples/tour.py`).
+- **MCP server** - tools over stdio; **runnable tour** (`examples/tour.py`).
 - Zero runtime dependencies (stdlib sqlite3); deterministic; 100+ tests; CI on
-  3 OS × 3 Python + a wheel-install job.
+  3 OS x 3 Python + a wheel-install job.
