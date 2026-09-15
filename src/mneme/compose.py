@@ -75,9 +75,10 @@ def _recheck_descriptor(row: Mapping[str, object], measurement: Mapping[str, obj
 
 
 def to_crucible_thesis(memory, session: str | None = None,
-                       layer: str = "L1") -> dict:
+                       layer: str = "L1",
+                       user: str | None = None) -> dict:
     """Export memories and Mneme drift measurements for Crucible assessment."""
-    rows = memory.store.memories(layer=layer, session=session)
+    rows = memory.store.memories(layer=layer, session=session, user=user)
     claims = []
     measurements = []
     for r in rows:

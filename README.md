@@ -6,13 +6,25 @@
 > memories, returns recall receipts that reproduce ranking, and detects source
 > drift when checks run.
 
-**Install from the versioned GitHub wheel after the v0.4.0 tag/release is published**:
+## Install
+
+### Released v0.4.0 wheel
+
+The public `v0.4.0` wheel is the current released package. It covers the released memory, recall, drift, provenance, accountable forgetting, and local-origin freshness workflows. It does not include the source-candidate MCP Crucible export/replay tools documented below: `mneme.to_crucible`, `mneme.replay_crucible`, `all_users`, `crucible.replay-template/1`, or the explicit export/replay refusal when `MNEME_STATE` is unset.
 
 ```bash
 python -m pip install "https://github.com/HarperZ9/mneme/releases/download/v0.4.0/mneme_memory-0.4.0-py3-none-any.whl"
 ```
 
-For a source install from the current GitHub branch:
+### Source candidate with MCP export/replay
+
+Until a matching future release asset exists, use a source checkout for the MCP Crucible export/replay candidate:
+
+```bash
+python -m pip install -e .
+```
+
+For a non-editable install from the public source repository after these source changes land:
 
 ```bash
 python -m pip install "mneme-memory @ git+https://github.com/HarperZ9/mneme.git"
@@ -20,7 +32,7 @@ python -m pip install "mneme-memory @ git+https://github.com/HarperZ9/mneme.git"
 
 Zero runtime dependencies · fully local · deterministic · fair-source.
 
-## Why another memory library
+## Why it matters
 
 Agent memory systems need evidence for two operational questions:
 
@@ -246,11 +258,28 @@ before/after hash. Tamper a tombstone and the chain breaks.
 mneme mcp          # JSON-RPC 2.0 over stdio; MNEME_STATE points at the DB
 ```
 
-Tools: `mneme.remember`, `mneme.recall`, `mneme.drift`, `mneme.provenance`,
-`mneme.origin_recheck`, `mneme.forget`, `mneme.audit`, `mneme.status`, and
-`mneme.doctor`. A recall through MCP returns the same re-derivable receipt, so
-the agent (or its operator) can see and re-check why a memory was surfaced; the
-accountability travels with the tool result.
+The released `v0.4.0` wheel exposes the released MCP memory, recall, drift, provenance, origin recheck, forget, audit, status, and doctor tools. The MCP Crucible export/replay tools in this section are source-candidate additions and require a source checkout until a matching future release asset is published.
+
+Source-candidate tools: `mneme.to_crucible` and `mneme.replay_crucible`. A recall
+through MCP returns the same re-derivable receipt, so the agent (or its operator)
+can see and re-check why a memory was surfaced; the accountability travels with
+the tool result. `mneme.to_crucible` returns the existing
+`mneme.crucible-export/2` object from the server-bound `MNEME_STATE`; MCP
+callers must pass either `user` to select one tenant inside that configured
+state, or `all_users: true` to deliberately export every tenant visible to the
+server. Optional `session` filters must be non-empty strings; `layer` is limited
+to `L1`, `L2`, or `L3`. The `user` value is a selector, not an authentication
+boundary; the host still owns which state DB the server may open. Source-candidate
+export and replay fail when `MNEME_STATE` is unset or empty. `mneme.replay_crucible`
+consumes a decoded `crucible.replay-template/1` object and returns
+`crucible.replay-pack/1` from the same explicitly configured state. State paths
+and executable commands stay out of the untrusted recheck descriptors. All-row
+templates (`skipped_count: 0`) are checked against the assessment measurement
+seal. Mixed templates with skipped rows are refused until the template carries a
+verifier-enforced full denominator that binds the disclosed descriptors, skipped
+count, and undisclosed rows to the assessment; Mneme cannot authenticate
+undisclosed rows from an external assessment from a caller-recomputed binding
+alone.
 
 ## Benchmark you can re-run
 
@@ -286,6 +315,17 @@ cites its atoms, so it is drift-checkable too (a scenario whose atom is gone is
   the supplied turns, so the same input rebuilds the same memory state.
 - **Tests are the contract.** The core workflows above have regression coverage
   with false-success controls for recall, drift, audit, and ingestion.
+
+## Development
+
+For a local development checkout:
+
+```bash
+python -m pip install -e ".[test]"
+python -m pytest
+```
+
+Use synthetic SQLite state for tests and examples. `mneme mcp` reads `MNEME_STATE`; do not point examples, demos, or interop checks at a live user database. Release publication remains gated by `DELIVERY.md`, CI, version/tag alignment, and explicit operator action.
 
 ## License
 

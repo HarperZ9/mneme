@@ -154,11 +154,12 @@ class AgentMemory:
             profile=profile or GATHER_DOCS_FILE_READ_PROFILE,
         )
 
-    def to_crucible(self, session: str | None = None, layer: str = "L1") -> dict:
+    def to_crucible(self, session: str | None = None, layer: str = "L1",
+                    user: str | None = None) -> dict:
         """Export memories as a crucible thesis + drift-derived measurements, so
         an independent judgment organ can certify the memory's faithfulness."""
         from .compose import to_crucible_thesis
-        return to_crucible_thesis(self, session, layer)
+        return to_crucible_thesis(self, session, layer, user=user)
 
     def replay_crucible(self, template: dict) -> dict:
         """Replay against an instance opened with both safety flags enabled.
