@@ -269,7 +269,7 @@ callers must pass either `user` to select one tenant inside that configured
 state, or `all_users: true` to deliberately export every tenant visible to the
 server. Optional `session` filters must be non-empty strings; `layer` is limited
 to `L1`, `L2`, or `L3`. The `user` value is a selector, not an authentication
-boundary; the host still owns which state DB the server may open. Source-candidate
+boundary; the host still owns which state DB the server may open. Crucible
 export and replay fail when `MNEME_STATE` is unset or empty. `mneme.replay_crucible`
 consumes a decoded `crucible.replay-template/1` object and returns
 `crucible.replay-pack/1` from the same explicitly configured state. State paths
