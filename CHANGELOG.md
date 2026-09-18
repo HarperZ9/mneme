@@ -1,8 +1,8 @@
 # Changelog
 
-## Source candidate after 0.4.0 (unreleased)
+## 0.4.1 (unreleased)
 
-This source tree adds native MCP Crucible export/replay operations after the public `v0.4.0` wheel. Those additions are not in the published `v0.4.0` wheel and must use a source checkout until a matching future release asset exists. No next release version is selected in this docs pass.
+This release candidate adds native MCP Crucible export/replay operations after the public `v0.4.0` wheel. Those additions are not in the published `v0.4.0` wheel and must use a source checkout until a matching `v0.4.1` release asset exists.
 
 - Add source-candidate MCP `mneme.to_crucible` and `mneme.replay_crucible` operations that reuse the existing Mneme export/replay library paths.
 - Keep descriptors declarative: no executable commands, host state paths, or database paths in untrusted replay descriptors.
