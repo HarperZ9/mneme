@@ -1,8 +1,26 @@
 # Delivery checklist - mneme releases
 
-## Source candidate after 0.4.0 (2026-09-15)
+## 0.4.1 release candidate preparation (2026-09-17)
 
-The public `v0.4.0` GitHub wheel is already published for the local-origin freshness release. This branch adds source-candidate MCP Crucible export/replay behavior after that release; do not describe those additions as present in the public `v0.4.0` wheel. A release for these additions requires an explicit future package version in project metadata, merge to `main`, exact-head CI, an unpublished matching tag or GitHub Release event, and the release workflow gates below. PyPI remains controlled by the repository `PYPI_ENABLED` variable and PyPI trusted publishing.
+The public `v0.4.0` GitHub wheel remains the released local-origin freshness package. This source candidate adds MCP Crucible export/replay behavior after that release and uses the next unused patch version, `0.4.1`, so those additions are not conflated with the public `v0.4.0` assets. Do not describe the MCP Crucible export/replay additions as present in the public `v0.4.0` wheel.
+
+Preflight scope for this candidate:
+
+- [ ] Version metadata aligned at `0.4.1` (`pyproject.toml`, `mneme.__version__`,
+      changelog top entry, and version-alignment test).
+- [ ] Source tests green on the exact release-candidate branch.
+- [ ] Wheel builds and installs in a clean environment; installed
+      `mneme --version` reports `0.4.1`.
+- [ ] Installed CLI and MCP smoke cover the existing synthetic memory flow,
+      malformed input controls, and MCP Crucible export/replay behavior.
+
+Publication boundary:
+
+- No `v0.4.1` tag, GitHub Release, or PyPI publication exists yet.
+- PyPI remains controlled by the repository `PYPI_ENABLED` variable and PyPI
+  trusted publishing.
+- Publishing requires merge to `main`, exact-head CI, an unpublished matching
+  tag or GitHub Release event, and the release workflow gates below.
 
 ## 0.4.0 release preparation (2026-09-13)
 
