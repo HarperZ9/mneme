@@ -57,13 +57,22 @@ def _write_project(
     )
 
 
-def test_current_release_candidate_metadata_is_allowed_but_not_publishable():
-    assert __version__ == "0.4.1"
+def test_current_tree_metadata_is_aligned_for_publication():
+    metadata = verify_metadata(ROOT)
 
-    verify_metadata(ROOT)
+    assert __version__ == metadata.package_version
+    verify_metadata(ROOT, publication_tag=f"v{metadata.package_version}")
 
+
+def test_publication_guard_rejects_unreleased_candidate_fixture(tmp_path):
+    _write_project(
+        tmp_path,
+        changelog_heading="0.4.1 (unreleased)",
+        readme_release="0.4.0",
+        readme_url_version="0.4.0",
+    )
     with pytest.raises(ReleaseMetadataError, match="unreleased"):
-        verify_metadata(ROOT, publication_tag="v0.4.1")
+        verify_metadata(tmp_path, publication_tag="v0.4.1")
 
 
 def test_publication_guard_accepts_final_aligned_release_metadata(tmp_path):

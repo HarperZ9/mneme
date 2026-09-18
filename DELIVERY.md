@@ -1,26 +1,38 @@
 # Delivery checklist - mneme releases
 
-## 0.4.1 release candidate preparation (2026-09-17)
+## 0.4.1 release preparation (2026-09-17)
 
-The public `v0.4.0` GitHub wheel remains the released local-origin freshness package. This source candidate adds MCP Crucible export/replay behavior after that release and uses the next unused patch version, `0.4.1`, so those additions are not conflated with the public `v0.4.0` assets. Do not describe the MCP Crucible export/replay additions as present in the public `v0.4.0` wheel.
+This record binds the checked gates for the MCP Crucible export/replay release prepared after PR #16. It describes the intended `v0.4.1` release content and preserves the public `v0.4.0` identity as the prior local-origin freshness package.
 
-Preflight scope for this candidate:
+Preflight scope:
 
-- [ ] Version metadata aligned at `0.4.1` (`pyproject.toml`, `mneme.__version__`,
-      changelog top entry, and version-alignment test).
-- [ ] Source tests green on the exact release-candidate branch.
-- [ ] Wheel builds and installs in a clean environment; installed
-      `mneme --version` reports `0.4.1`.
-- [ ] Installed CLI and MCP smoke cover the existing synthetic memory flow,
+- [x] Version metadata aligned at `0.4.1` (`pyproject.toml`, `mneme.__version__`,
+      README wheel URL, changelog top entry, and version-alignment test).
+- [x] Source tests green on the exact final-prep branch.
+- [x] Wheel and sdist build in a clean environment; installed `mneme --version`
+      reports `0.4.1`.
+- [x] Installed CLI and MCP smoke cover the existing synthetic memory flow,
       malformed input controls, and MCP Crucible export/replay behavior.
+- [x] Publication guard accepts the final `v0.4.1` metadata and keeps synthetic
+      unreleased/stale/mismatched controls failing closed.
 
-Publication boundary:
+Release boundary:
 
-- No `v0.4.1` tag, GitHub Release, or PyPI publication exists yet.
-- PyPI remains controlled by the repository `PYPI_ENABLED` variable and PyPI
-  trusted publishing.
-- Publishing requires merge to `main`, exact-head CI, an unpublished matching
-  tag or GitHub Release event, and the release workflow gates below.
+- MCP Crucible export/replay remains assessment-bound replay of Mneme
+  measurements from a caller-owned SQLite snapshot. It does not become external
+  source certification.
+- `mneme.to_crucible` descriptors stay declarative: no executable commands,
+  host state paths, or database paths in untrusted replay descriptors.
+- This checklist does not claim full enterprise completeness.
+
+Publication notes:
+
+- `.github/workflows/release.yml` verifies final release metadata, builds,
+  installs the wheel, smokes `mneme --version` and `mneme bench`, and uploads
+  `dist/` as a GitHub Actions artifact. It does not attach the wheel or sdist
+  to a GitHub Release page.
+- For GitHub Release publication, attach checked wheel/sdist assets explicitly
+  and verify their hashes against the release-build receipt.
 
 ## 0.4.0 release preparation (2026-09-13)
 

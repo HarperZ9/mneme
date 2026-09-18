@@ -1,10 +1,10 @@
 # Changelog
 
-## 0.4.1 (unreleased)
+## 0.4.1 (2026-09-17)
 
-This release candidate adds native MCP Crucible export/replay operations after the public `v0.4.0` wheel. Those additions are not in the published `v0.4.0` wheel and must use a source checkout until a matching `v0.4.1` release asset exists.
+Add native MCP Crucible export/replay operations after the public `v0.4.0` wheel. The `v0.4.1` package includes those MCP tools with the same bounded replay contracts as the CLI and library paths.
 
-- Add source-candidate MCP `mneme.to_crucible` and `mneme.replay_crucible` operations that reuse the existing Mneme export/replay library paths.
+- Add MCP `mneme.to_crucible` and `mneme.replay_crucible` operations that reuse the existing Mneme export/replay library paths.
 - Keep descriptors declarative: no executable commands, host state paths, or database paths in untrusted replay descriptors.
 - Keep skipped-row replay templates refused until the contract includes a verifier-enforced full denominator for disclosed, skipped, and undisclosed rows.
 
