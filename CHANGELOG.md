@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.2 (2026-09-22)
+
+Publish to PyPI as `flywheel-mneme`. The install command changes, so this is a
+release rather than a metadata edit.
+
+`mneme-memory` on PyPI belongs to an unrelated project described as a portable
+memory layer for AI agents, which is close enough to this package's purpose to be
+a real confusion hazard. `flywheel-mneme` is the HarperZ9 distribution, published
+with PEP 740 attestations recording which workflow built the bytes.
+
+The import name, the module layout and the `mneme` console script are unchanged.
+The `mneme-memory:` prefix inside composed evidence ids is an evidence identifier
+format rather than a package reference, and is deliberately left as it is.
+
 ## 0.4.1 (2026-09-17)
 
 Add native MCP Crucible export/replay operations after the public `v0.4.0` wheel. The `v0.4.1` package includes those MCP tools with the same bounded replay contracts as the CLI and library paths.

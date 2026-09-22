@@ -8,12 +8,20 @@
 
 ## Install
 
-### Released v0.4.1 wheel
+### Released v0.4.2 wheel
 
-The public `v0.4.1` wheel is the current released package. It covers the released memory, recall, drift, provenance, accountable forgetting, local-origin freshness, and MCP Crucible export/replay workflows documented below.
+The public `v0.4.2` wheel is the current released package. It covers the released memory, recall, drift, provenance, accountable forgetting, local-origin freshness, and MCP Crucible export/replay workflows documented below.
 
 ```bash
-python -m pip install "https://github.com/HarperZ9/mneme/releases/download/v0.4.1/mneme_memory-0.4.1-py3-none-any.whl"
+python -m pip install flywheel-mneme
+```
+
+`flywheel-mneme` is the HarperZ9 distribution, published with PEP 740 attestations. The bare name `mneme-memory` on PyPI belongs to an unrelated project.
+
+To check the bytes yourself rather than trust the index, install the release wheel directly:
+
+```bash
+python -m pip install "https://github.com/HarperZ9/mneme/releases/download/v0.4.2/flywheel_mneme-0.4.2-py3-none-any.whl"
 ```
 
 ### Source install
@@ -27,7 +35,7 @@ python -m pip install -e .
 For a non-editable install from the public source repository:
 
 ```bash
-python -m pip install "mneme-memory @ git+https://github.com/HarperZ9/mneme.git"
+python -m pip install "flywheel-mneme @ git+https://github.com/HarperZ9/mneme.git"
 ```
 
 Zero runtime dependencies · fully local · deterministic · fair-source.
@@ -258,7 +266,7 @@ before/after hash. Tamper a tombstone and the chain breaks.
 mneme mcp          # JSON-RPC 2.0 over stdio; MNEME_STATE points at the DB
 ```
 
-The released `v0.4.1` wheel exposes the MCP memory, recall, drift, provenance, origin recheck, forget, audit, status, doctor, Crucible export, and Crucible replay tools.
+The released `v0.4.2` wheel exposes the MCP memory, recall, drift, provenance, origin recheck, forget, audit, status, doctor, Crucible export, and Crucible replay tools.
 
 MCP tools `mneme.to_crucible` and `mneme.replay_crucible` reuse the same replay library boundaries as the CLI. A recall
 through MCP returns the same re-derivable receipt, so the agent (or its operator)

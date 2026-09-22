@@ -89,7 +89,7 @@ irreversible); this turns it into a reviewed, pre-flighted, four-command action.
       `mneme bench` (76.6% / 100% recall), and the documented MCP tools resolve from the
       installed package.
 - [x] **LICENSE** and **CHANGELOG** present; `pyproject.toml` metadata
-      complete (name `mneme-memory`, console script `mneme`, urls).
+      complete (name `flywheel-mneme`, console script `mneme`, urls).
 - [x] **CI written** - `.github/workflows/ci.yml`: pytest on ubuntu/windows/macos
       x py3.11-3.13 + a wheel-install job.
 
@@ -100,7 +100,7 @@ irreversible); this turns it into a reviewed, pre-flighted, four-command action.
 
 ```bash
 # one-time on PyPI: add a trusted publisher
-#   project: mneme-memory ; owner: HarperZ9 ; repo: mneme ; workflow: release.yml
+#   project: flywheel-mneme ; owner: HarperZ9 ; repo: mneme ; workflow: release.yml
 # after project.version names the unpublished release you intend:
 PKG_VER=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
 git tag "v$PKG_VER" && git push origin "v$PKG_VER"

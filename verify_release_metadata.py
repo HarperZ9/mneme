@@ -86,7 +86,7 @@ def _read_readme_release(root: Path) -> tuple[str, tuple[str, ...]]:
     asset_versions = tuple(
         match.group(1)
         for match in re.finditer(
-            rf"releases/download/v({VERSION_RE})/mneme_memory-\1-py3-none-any\.whl",
+            rf"releases/download/v({VERSION_RE})/flywheel_mneme-\1-py3-none-any\.whl",
             readme,
         )
     )
