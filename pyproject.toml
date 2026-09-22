@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flywheel-mneme"
-version = "0.4.1"
+version = "0.4.2"
 description = "Accountable agent memory with layered retrieval, source provenance, re-derivable recall receipts, and drift checks. Zero runtime dependencies."
 readme = "README.md"
 requires-python = ">=3.11"

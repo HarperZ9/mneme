@@ -50,7 +50,7 @@ def _write_project(
             ### Released v{readme_release} wheel
 
             ```bash
-            python -m pip install "https://github.com/HarperZ9/mneme/releases/download/v{readme_url_version}/mneme_memory-{readme_url_version}-py3-none-any.whl"
+            python -m pip install "https://github.com/HarperZ9/mneme/releases/download/v{readme_url_version}/flywheel_mneme-{readme_url_version}-py3-none-any.whl"
             ```
         """).lstrip(),
         encoding="utf-8",

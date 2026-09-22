@@ -10,5 +10,5 @@ from .memory import AgentMemory
 from .recall import recall, verify_recall
 from .receipt import ProvenanceReceipt, RecallReceipt
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 __all__ = ["AgentMemory", "ProvenanceReceipt", "RecallReceipt", "recall", "verify_recall"]

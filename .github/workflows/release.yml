@@ -7,7 +7,7 @@ name: release
 # For a project that does not exist yet, register it as a PENDING publisher; the
 # first successful run creates the project. Then set the repository variable
 # PYPI_ENABLED to 'true' and push a tag:
-#   git tag v0.4.1 && git push origin v0.4.1
+#   git tag v0.4.2 && git push origin v0.4.2
 #
 # Actions are pinned by commit SHA, not by tag. A moving tag is a supply-chain
 # hole, and this is a project about verifiable provenance.
