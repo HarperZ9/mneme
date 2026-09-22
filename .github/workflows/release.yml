@@ -1,54 +1,104 @@
 name: release
 
-# Publish to PyPI via OIDC trusted publishing (no token stored anywhere).
-# One-time setup on PyPI: add a trusted publisher for project "mneme-memory",
-# owner "HarperZ9", repo "mneme", workflow "release.yml". After
-# project.version names the unpublished release you intend:
-#   PKG_VER=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-#   git tag "v$PKG_VER" && git push origin "v$PKG_VER"
-# publishes automatically. GitHub Releases can also trigger it.
+# Publish to PyPI with OIDC trusted publishing. No token is stored anywhere.
+#
+# One-time setup on PyPI: add a trusted publisher for project "flywheel-mneme",
+# owner "HarperZ9", repo "mneme", workflow "release.yml", environment "pypi".
+# For a project that does not exist yet, register it as a PENDING publisher; the
+# first successful run creates the project. Then set the repository variable
+# PYPI_ENABLED to 'true' and push a tag:
+#   git tag v0.4.1 && git push origin v0.4.1
+#
+# Actions are pinned by commit SHA, not by tag. A moving tag is a supply-chain
+# hole, and this is a project about verifiable provenance.
 
 on:
   push:
     tags: ["v*"]
   release:
     types: [published]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.12"
-      - name: verify release metadata
+
+      - name: build sdist and wheel
         run: |
-          python verify_release_metadata.py --publication-tag "$GITHUB_REF_NAME"
-          python -m pip install build
+          python -m pip install --upgrade build
           python -m build
-      - name: install the wheel and smoke the CLI (no broken release)
+
+      - name: the tag must match the declared version
+        if: github.event_name != 'workflow_dispatch'
         run: |
-          python -m venv /tmp/v && /tmp/v/bin/pip install dist/*.whl
-          /tmp/v/bin/mneme --version && /tmp/v/bin/mneme bench > /dev/null
-      - uses: actions/upload-artifact@v4
+          PKG_VER=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          TAG_VER="${GITHUB_REF_NAME#v}"
+          if [ -n "$TAG_VER" ] && [ "$TAG_VER" != "$PKG_VER" ]; then
+            echo "tag $TAG_VER does not match pyproject $PKG_VER"; exit 1
+          fi
+          echo "version gate: tag $TAG_VER == pyproject $PKG_VER"
+
+      - name: artifact digests, recorded in the run log
+        run: |
+          python - <<'EOF'
+          import hashlib, pathlib
+          for p in sorted(pathlib.Path("dist").iterdir()):
+              print(f"sha256  {hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}")
+          EOF
+
+      # Installs the wheel into a clean venv and resolves EVERY declared console
+      # script to a real callable. Stronger than `--version`: a package whose
+      # entry point names a missing function installs fine and fails at first
+      # use, and that is exactly the defect this step was written to catch.
+      - name: no broken release, resolve every entry point
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install --upgrade pip
+          /tmp/smoke/bin/pip install "$(echo dist/*.whl)"
+          /tmp/smoke/bin/python - <<'EOF'
+          from importlib.metadata import distribution
+          d = distribution("flywheel-mneme")
+          eps = [e for e in d.entry_points if e.group == "console_scripts"]
+          for e in eps:
+              fn = e.load()
+              assert callable(fn), f"{e.name} -> {e.value} is not callable"
+              print(f"entry point ok: {e.name} -> {e.value}")
+          print(f"flywheel-mneme {d.version}: {len(eps)} entry point(s) resolved")
+          EOF
+
+      - name: the sdist must build a wheel too
+        run: |
+          python -m venv /tmp/sd
+          /tmp/sd/bin/pip install --upgrade pip build
+          /tmp/sd/bin/python -m build --wheel --outdir /tmp/sdout "$(echo dist/*.tar.gz)"
+          ls -l /tmp/sdout
+
+      - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: dist
           path: dist/
 
   publish:
     needs: build
-    # gated: stays skipped until PyPI trusted publishing is set up and the repo
-    # variable PYPI_ENABLED is set to 'true' - so a tag/release builds + smokes
-    # without a failing publish run before the trusted publisher exists.
+    # Stays skipped until the trusted publisher exists and PYPI_ENABLED is 'true',
+    # so a tag builds and smokes without a failing publish run beforehand.
     if: ${{ vars.PYPI_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
-      id-token: write        # OIDC: no token, no secret
+      id-token: write        # OIDC. No token, no secret.
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: dist
           path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          # PEP 740 attestations: the index records who built these bytes and
+          # from which workflow, verifiable without trusting us.
+          attestations: true

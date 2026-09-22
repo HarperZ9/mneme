@@ -27,7 +27,7 @@ python -m pip install -e .
 For a non-editable install from the public source repository:
 
 ```bash
-python -m pip install "mneme-memory @ git+https://github.com/HarperZ9/mneme.git"
+python -m pip install "flywheel-mneme @ git+https://github.com/HarperZ9/mneme.git"
 ```
 
 Zero runtime dependencies · fully local · deterministic · fair-source.
