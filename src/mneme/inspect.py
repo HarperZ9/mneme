@@ -61,7 +61,8 @@ h1{font:600 1.2rem var(--body);margin:0 0 .2rem}
 .turn{font-size:.85rem;padding:.25rem 0;border-top:1px solid var(--hair)}
 .turn .r{font:.7rem var(--mono);color:var(--iris)}
 .audit .row{font:.74rem var(--mono);padding:.3rem 0;border-top:1px solid var(--hair)}
-.audit .op{font-weight:600}.audit .op.forget{color:var(--bad)}.audit .op.update{color:var(--warn)}
+.audit .op{font-weight:600}.audit .op.forget,.audit .op.erase{color:var(--bad)}
+.audit .op.update{color:var(--warn)}
 .intact{font:600 .72rem var(--mono);padding:.2em .6em;border-radius:6px;border:1px solid var(--ok);color:var(--ok)}
 .empty{color:var(--muted);font-style:italic;font-size:.85rem}
 """

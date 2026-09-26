@@ -94,8 +94,8 @@ class AgentMemory:
     def supersede(self, old_id: str, new_text: str, *, reason: str = "") -> dict | None:
         """A fact CHANGED: create a new memory carrying `new_text` (grounded on
         the old one) and close the old memory's validity, KEEPING it for history.
-        Unlike forget (GDPR erasure), the timeline is preserved. None if `old_id`
-        is absent or already superseded."""
+        A forget erases the fact with its timeline; supersede preserves it. None
+        if `old_id` is absent or already superseded."""
         old = self.store.memory(old_id)
         if old is None or old["valid_until"] is not None:
             return None

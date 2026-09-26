@@ -43,6 +43,21 @@ and replay snapshots move to a per-user state directory. Not published.
 - The row-level `forget`, `update` and `supersede` now write their audit entry
   in the same transaction as the row change, so a crash cannot leave an audit
   record of a change that never happened.
+- `mneme status` and `mneme doctor` print the database's absolute path,
+  whether it is the default `mneme.db` in the current directory, its files,
+  row counts and schema history, and the replay snapshot directory with
+  counts. Both open the database read-only and never create it. They warn
+  when the database sits inside a git work tree, when an older mneme reopened
+  it, when replay snapshots were left behind, and when the state keeps
+  nothing (`:memory:` or an empty path). `doctor` also re-derives the audit
+  chain and exits 1 on any warning.
+- MCP `mneme.doctor` adds `state_path_absolute`, `state_from_env`, `kind`,
+  `default_location`, `exists`, `git_work_tree`, `snapshot_dir`, `warnings`
+  and `notes`, and never opens the database. `state_path` keeps its meaning:
+  the configured value.
+- Docs, docstrings and runtime strings no longer call forget a legal erasure;
+  they say what it removes and what it leaves. The 0.1.0 entry below keeps its
+  wording, followed by a dated correction.
 
 ## 0.4.2 (2026-09-22)
 
@@ -135,6 +150,10 @@ benchmark, and accountable forgetting.
   validity window, so `history` shows the timeline (Denver → Portland → Seattle)
   and `recall(as_of=N)` reconstructs the past; every transition is in the audit
   log. `forget` (GDPR erasure) still removes; `supersede` (a fact changed) keeps.
+  Correction, 2026-09-26: this `forget` deleted the memory row only. The raw
+  turn and the rows derived from it stayed, so the label above overstated it.
+  From 0.5.0, `forget` erases the source turns and every derived form, and its
+  receipt names what stays (see the 0.5.0 entry).
 - **Provenance receipt** on every memory (sources, extractor, criterion, hash).
 - **Re-derivable recall receipt** - ranked hits with bm25/vector/fused scores
   and the fusion rule; re-run the scorer, reproduce the ranking.

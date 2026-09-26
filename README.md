@@ -143,6 +143,37 @@ An embedder (`AgentMemory(..., embedder=fn)`) turns on the vector channel; an
 LLM `Extractor` plugs in for richer atoms. Neither is required: the
 deterministic floor works with no model and no API.
 
+## Where your memory lives
+
+The CLI takes `--state` before the command (`mneme --state mem.db recall …`),
+and the MCP server reads `MNEME_STATE`. Without either, mneme uses `mneme.db`
+in the directory it runs in, so a command run in another directory starts
+another database. From 0.5.0 (unreleased; install from source), two commands
+show where it is:
+
+```bash
+mneme status    # absolute path, default or not, files, row counts, snapshot directory
+mneme doctor    # the same, plus the audit chain; exit 1 when something needs you
+```
+
+Both open the database read-only: they never create a missing database and
+never write to an existing one (SQLite can still update a WAL database's
+`-shm` index, as any reader does). They warn when the database sits inside a
+git work tree, where one `git add .` would commit your memory, when an older
+mneme has reopened it, and when replay snapshots were left behind. The MCP
+`mneme.doctor` tool reports the path facts without opening the database.
+
+Replay snapshots are full copies of the database. From 0.5.0 they live in a
+per-user state directory, `<LocalAppData>/mneme/snapshots` on Windows and
+`$XDG_STATE_HOME/mneme/snapshots` (or `~/.local/state/mneme/snapshots`)
+elsewhere, never beside the database. `mneme status` counts them, and a
+`forget` removes the copies of its store.
+
+Use one mneme version per database file. An older mneme that reopens a
+database a newer one wrote gives the rows it writes only its own, older
+guarantees. From 0.5.0 mneme records when that happened, and `mneme doctor`
+reports it.
+
 ## The ecosystem: memory that traces to its source
 
 Point mneme at an accountable intake tool ([gather](https://github.com/HarperZ9/gather),
@@ -294,6 +325,10 @@ exactly that plan and returns the receipt, without the commitment openings. The
 model that asked for the plan can send the digest too, so a host that launches
 mneme for an agent should require an owner-granted step for this tool.
 
+From 0.5.0, `mneme.doctor` also returns the database's absolute path, whether
+it came from `MNEME_STATE`, the replay snapshot directory and any warnings,
+without opening the database.
+
 MCP tools `mneme.to_crucible` and `mneme.replay_crucible` reuse the same replay library boundaries as the CLI. A recall
 through MCP returns the same re-derivable receipt, so the agent (or its operator)
 can see and re-check why a memory was surfaced; the accountability travels with
@@ -345,8 +380,12 @@ cites its atoms, so it is drift-checkable too (a scenario whose atom is gone is
 ## Guarantees
 
 - **Zero runtime dependencies** (stdlib `sqlite3`). `pytest` is the only dev dep.
-- **Deterministic core.** Stored hashes and default rankings are derived from
-  the supplied turns, so the same input rebuilds the same memory state.
+- **Deterministic core.** Memory rows, their hashes and default rankings are
+  derived from the supplied turns, so the same input rebuilds the same
+  memories. Some values are random on purpose: the store id that names the
+  replay snapshot directory, and the refs and salted commitments in the audit
+  entries an erase writes, which keep those entries from confirming a guess of
+  what was erased.
 - **Tests are the contract.** The core workflows above have regression coverage
   with false-success controls for recall, drift, audit, and ingestion.
 

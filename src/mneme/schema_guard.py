@@ -36,6 +36,34 @@ def _as_int(value: str | None) -> int | None:
         return None
 
 
+def read(conn: sqlite3.Connection) -> dict:
+    """The stored version, high-water mark and downgrade marker, as ints or None."""
+    return {"stored": _as_int(meta_get(conn, "schema_version")),
+            "high_water": _as_int(meta_get(conn, META_SCHEMA_HIGH_WATER)),
+            "downgrade_seen": _as_int(meta_get(conn, META_SCHEMA_DOWNGRADE_SEEN))}
+
+
+def findings(stored: int | None, high: int | None, running: int,
+             downgrade_seen: int | None = None) -> list[str]:
+    """Version-mixing findings for a database, worded for the owner."""
+    problems = []
+    if high is not None and stored is not None and stored < high:
+        problems.append(
+            f"an older mneme rewrote this database (schema_version {stored} is "
+            f"below the high-water mark {high}); erase guarantees for rows "
+            "written since then may not hold")
+    elif downgrade_seen is not None:
+        problems.append(
+            f"an older mneme reopened this database earlier (it stamped schema "
+            f"{downgrade_seen}); erase guarantees for rows it wrote may not hold")
+    known = max(v for v in (high, stored, running) if v is not None)
+    if running < known:
+        problems.append(
+            f"this database was written by a newer mneme (schema {known}); this "
+            f"mneme (schema {running}) may not keep that version's guarantees")
+    return problems
+
+
 def stamp(conn: sqlite3.Connection, current: str) -> str | None:
     """Stamp `current`, raise the high-water mark, and warn on version mixing.
 
@@ -43,20 +71,12 @@ def stamp(conn: sqlite3.Connection, current: str) -> str | None:
     commits it together with the migrations.
     """
     running = int(current)
-    stored = _as_int(meta_get(conn, "schema_version"))
-    high = _as_int(meta_get(conn, META_SCHEMA_HIGH_WATER))
-    problems = []
+    state = read(conn)
+    stored, high = state["stored"], state["high_water"]
+    problems = findings(stored, high, running)
     if high is not None and stored is not None and stored < high:
-        problems.append(
-            f"an older mneme rewrote this database (schema_version {stored} is "
-            f"below the high-water mark {high}); erase guarantees for rows "
-            "written since then may not hold")
         meta_set(conn, META_SCHEMA_DOWNGRADE_SEEN, str(stored))
     known = max(v for v in (high, stored, running) if v is not None)
-    if running < known:
-        problems.append(
-            f"this database was written by a newer mneme (schema {known}); this "
-            f"mneme (schema {running}) may not keep that version's guarantees")
     meta_set(conn, "schema_version", current)
     meta_set(conn, META_SCHEMA_HIGH_WATER, str(known))
     if not problems:

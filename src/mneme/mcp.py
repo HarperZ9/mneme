@@ -17,7 +17,7 @@ import os
 import sys
 from typing import Any
 
-from . import __version__, mcp_forget
+from . import __version__, mcp_forget, state_report
 from .memory import AgentMemory
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
@@ -131,7 +131,7 @@ def _tool_defs() -> list[dict]:
          "description": "Liveness and identity of the mneme MCP server (name, version, protocol). Network-free health probe.",
          "inputSchema": {"type": "object", "properties": {}}},
         {"name": "mneme.doctor",
-         "description": "Readiness diagnostic: identity plus the configured state-db path and the tools exposed.",
+         "description": "Readiness diagnostic: identity, the configured state-db path and its absolute location, the replay snapshot directory, warnings (a missing database, one inside a git work tree), and the tools exposed. Never opens the database.",
          "inputSchema": {"type": "object", "properties": {}}},
     ]
 
@@ -189,9 +189,9 @@ def call_tool(name: str, args: dict) -> str:
     if name in ("mneme.status", "mneme.doctor"):
         info = {"ok": True, "server": "mneme", "version": __version__,
                 "protocol": MCP_PROTOCOL_VERSION}
-        if name == "mneme.doctor":
-            info["state_path"] = _state_path()
-            info["tools"] = [t["name"] for t in _tool_defs()]
+        if name == "mneme.doctor":             # path facts only; never opens the DB
+            info.update(state_report.mcp_doctor(os.environ.get("MNEME_STATE")),
+                        tools=[t["name"] for t in _tool_defs()])
         return json.dumps(info, indent=2, ensure_ascii=False)
     if name == "mneme.origin_recheck":
         _reject_unknown(args, {"memory_id", "allowed_root", "profile"})

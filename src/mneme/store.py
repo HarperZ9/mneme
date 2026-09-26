@@ -186,7 +186,7 @@ def _close_private_snapshot(
 class Store:
     """Thin, deterministic wrapper over a SQLite memory DB. A monotonic `ord`
     counter (persisted in meta) orders rows without a wall clock, so a rebuild
-    from the same inputs is byte-identical."""
+    from the same inputs has the same turns and memories (meta holds a random id)."""
 
     SCHEMA_VERSION = SCHEMA_VERSION
 
@@ -400,8 +400,8 @@ class Store:
 
     def supersede(self, old_id: str, new_id: str, reason: str = "") -> dict | None:
         """Close a memory's validity (a fact CHANGED, not erased): mark it
-        superseded by `new_id` as of now, KEEPING it for temporal history. Unlike
-        forget (which erases the text for GDPR), supersede preserves the timeline.
+        superseded by `new_id` as of now, KEEPING it for temporal history. A
+        forget erases a fact with its history; supersede preserves the timeline.
         Returns the audit entry, or None if `old_id` is absent/already closed."""
         row = self.memory(old_id)
         if row is None or row["valid_until"] is not None:
@@ -475,20 +475,7 @@ class Store:
         deleted, reordered, edited, OR truncated tombstone breaks it — you cannot
         quietly forget that you forgot something, and you cannot forget that you
         forgot by lopping off the tail."""
-        from .receipt import content_hash
-        prev = ""
-        count = 0
-        for e in self.audit_log():
-            prev = content_hash(prev, e["op"], e["memory_id"], e["layer"],
-                                e["before_sha"], e["after_sha"], e["reason"])
-            if prev != e["entry_sha"]:
-                return False
-            count += 1
-        head = self._meta_get("audit_head")
-        expected = self._meta_get("audit_count")
-        if head is None or expected is None:
-            return True                 # unanchored legacy log: chain-only check
-        return prev == head and count == int(expected)
+        return audit_writer.verify(self.conn)
 
     def close(self) -> str | None:
         if self._private_finalizer is not None and self._private_finalizer.alive:

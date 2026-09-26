@@ -7,10 +7,12 @@ erasing it. The timeline of any fact is then a query, and every transition is in
 the hash-chained audit log — a memory history you can re-check, which no memory
 product carries.
 
-Two erasure semantics, kept distinct on purpose:
-  - SUPERSEDE  a fact CHANGED — the old value is retained for history.
-  - FORGET     a fact must be ERASED (GDPR) — the text is removed, only a
-               tombstone remains. History cannot resurrect a forgotten fact.
+Two kinds of change, kept distinct on purpose:
+  - SUPERSEDE  a fact CHANGED: the old value is kept for history.
+  - FORGET     a fact is ERASED together with its source turns, everything
+               derived from it and its whole supersession history. The audit
+               log keeps one tombstone per erased row, and history cannot
+               bring the fact back.
 
 `history(...)` returns the ordered timeline of matching memories with their
 validity windows; `as_of` (on recall/memories) reconstructs what was known at a
@@ -55,9 +57,9 @@ def history(memory, *, contains: str | None = None, predicate: str | None = None
     # transitions (honest null) rather than presenting one tenant's fact as THE
     # current value. The timeline itself is attributed per entry.
     spans_tenants = user is None and len({t["user"] for t in timeline}) > 1
-    note = ("every transition is also in the hash-chained audit log — the "
-            "history is re-checkable. A FORGOTTEN (GDPR-erased) fact never "
-            "appears here; only superseded facts keep their timeline.")
+    note = ("every transition is also in the hash-chained audit log, so the "
+            "history is re-checkable. A forgotten fact is erased with its whole "
+            "timeline and never appears here; only superseded facts keep theirs.")
     if spans_tenants:
         note = ("timeline spans multiple users (user=None) — 'current' and "
                 "'transitions' are withheld (null) because a single-subject answer "

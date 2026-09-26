@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import __version__
 from .cli_forget import add_parsers as add_forget_parsers
+from .cli_state import add_parsers as add_state_parsers
 from .memory import AgentMemory
 from .store import SQLITE_SIDECAR_SUFFIXES, quiescent_snapshot_path
 
@@ -208,7 +209,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="mneme", description="accountable agent memory")
     p.add_argument("--version", action="version", version=f"mneme {__version__}")
     p.add_argument("--state", default="mneme.db",
-                   help="path to the SQLite memory DB (default: mneme.db)")
+                   help="path to the SQLite memory DB (default: mneme.db in the current directory; see `mneme status`)")
     sub = p.add_subparsers(dest="command", required=True)
 
     rem = sub.add_parser("remember", help="record turns (L0) and extract atoms (L1) with provenance")
@@ -251,6 +252,7 @@ def build_parser() -> argparse.ArgumentParser:
     sc.set_defaults(func=cmd_scenarios)
 
     add_forget_parsers(sub)                     # forget and scrub: cli_forget.py
+    add_state_parsers(sub)                      # status and doctor: cli_state.py
 
     up = sub.add_parser("update", help="edit a memory's text, recording before/after in the audit log")
     up.add_argument("memory_id")

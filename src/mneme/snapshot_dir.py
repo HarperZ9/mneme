@@ -215,16 +215,22 @@ def _store_dirs(root: Path) -> list[Path]:
     return dirs
 
 
+def _state_of(path: Path) -> str:
+    """'live' or 'orphaned' by the creating process id in the name, else 'unknown'."""
+    match = _NAME.fullmatch(path.name)
+    if match is None:
+        return "unknown"
+    return "live" if _pid_alive(int(match.group(1))) else "orphaned"
+
+
 def sweep_orphans(root: Path | None = None) -> dict:
     """Remove snapshots whose creating process is gone. Unparseable names stay."""
     counts = {"removed": 0, "kept_live": 0, "kept_unknown": 0, "failed": 0}
     for directory in _store_dirs(root or snapshot_root()):
         for path in _snapshot_files(directory):
-            match = _NAME.fullmatch(path.name)
-            if match is None:
-                counts["kept_unknown"] += 1
-            elif _pid_alive(int(match.group(1))):
-                counts["kept_live"] += 1
+            state = _state_of(path)
+            if state != "orphaned":
+                counts[f"kept_{state}"] += 1
             elif _remove_with_sidecars(path):
                 counts["removed"] += 1
             else:
@@ -232,11 +238,25 @@ def sweep_orphans(root: Path | None = None) -> dict:
     return counts
 
 
+def _directories(store_id: str | None, source_path: Path | None) -> list[Path]:
+    """The keyed directory and the by-path directory a store's snapshots can use."""
+    found = {store_dir(store_id, None), store_dir(None, source_path)}
+    return sorted(d for d in found if d is not None)
+
+
+def store_snapshot_counts(store_id: str | None, source_path: Path | None) -> dict:
+    """Count this store's snapshots by state, without removing any."""
+    counts = {"live": 0, "orphaned": 0, "unknown": 0}
+    for directory in _directories(store_id, source_path):
+        for path in _snapshot_files(directory):
+            counts[_state_of(path)] += 1
+    return counts
+
+
 def remove_store_snapshots(store_id: str | None, source_path: Path | None) -> dict:
     """Remove every snapshot of this store, live or not, keyed or by path."""
-    directories = {store_dir(store_id, None), store_dir(None, source_path)}
     removed, failed = 0, []
-    for directory in sorted(d for d in directories if d is not None):
+    for directory in _directories(store_id, source_path):
         for path in _snapshot_files(directory):
             if _remove_with_sidecars(path):
                 removed += 1
