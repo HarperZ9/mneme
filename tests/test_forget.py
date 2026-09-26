@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from mneme import AgentMemory
+from mneme import AgentMemory, audit_blind
 
 TURNS = [
     {"id": "t1", "role": "user", "text": "My name is Dana and I live in Denver."},
@@ -58,7 +58,10 @@ def test_update_edits_text_keeps_provenance_and_records_before_after():
     assert entry["before_sha"] != entry["after_sha"]
     row = m.store.memory(denver["id"])
     assert "seattle" in row["text"].lower()
-    assert row["content_sha256"] == entry["after_sha"]
+    # schema 5 blinds the history: the entry commits to the new content hash
+    # with a salt kept in the salts table, and opens only to that hash
+    assert row["content_sha256"] not in (entry["before_sha"], entry["after_sha"])
+    assert audit_blind.opens(m.store.conn, entry["after_sha"], row["content_sha256"])
     # provenance (sources, criterion) is preserved through the edit
     prov_after = m.provenance(denver["id"])
     assert prov_after["source_ids"] == prov_before["source_ids"]

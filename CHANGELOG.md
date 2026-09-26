@@ -3,7 +3,8 @@
 ## 0.5.0 (unreleased)
 
 BREAKING. `forget` becomes a true forget, the MCP forget tool takes two steps,
-and replay snapshots move to a per-user state directory. Not published.
+replay snapshots move to a per-user state directory, and schema 5 blinds the
+update and supersede history in the audit log. Not published.
 
 - `forget` erases the memory, its source turns and every derived form:
   memories that cite an erased turn or memory, scenario and persona rows, and
@@ -40,9 +41,20 @@ and replay snapshots move to a per-user state directory. Not published.
   A lower `schema_version` on open means an older mneme reopened it: mneme
   warns, keeps the finding in `meta.schema_downgrade_seen`, and migrates
   again. Do not share one database file across mneme versions.
+- Schema 5 blinds audit history. `update` and `supersede` entries store
+  `b1:` + sha256(tag, salt, content hash) for each version instead of the
+  plain content hash, with a fresh salt per value in a new `salts` table under
+  the memory it describes. An erase deletes those salts in its transaction,
+  and the receipt reports `salts_deleted` and counts earlier rows as `blinded`
+  or `unsalted_hashes`. The row-level `forget` tombstone is blinded with a salt
+  that is never stored, and it deletes the row's salts. Entries written before
+  schema 5 keep their plain hashes, since rewriting them would break the chain.
+  An `update` entry's `after_sha` no longer equals the row's `content_sha256`;
+  `audit_blind.opens(conn, value, content_sha256)` checks it instead.
 - The row-level `forget`, `update` and `supersede` now write their audit entry
   in the same transaction as the row change, so a crash cannot leave an audit
-  record of a change that never happened.
+  record of a change that never happened. A failure before the commit rolls
+  the row change, its salts and its entry back together.
 - `mneme status` and `mneme doctor` print the database's absolute path,
   whether it is the default `mneme.db` in the current directory, its files,
   row counts and schema history, and the replay snapshot directory with

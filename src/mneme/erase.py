@@ -6,7 +6,9 @@ in one transaction with `secure_delete` on, deletes every row in the plan and
 appends one audit entry per erased row. The entry names a random erase ref,
 never the content-derived id, and its `before` value is a commitment
 `sha256("mneme.erase.v1" || 0x00 || salt || utf8(text))` whose 32-byte salt is
-never stored. Only the local CLI can print the salt, once, on request.
+never stored. Only the local CLI can print the salt, once, on request. The
+same transaction deletes the salts of the erased memories' blinded update and
+supersede history (audit_blind.py), so those earlier entries link to nothing.
 
 After the commit, `scrub_store` checkpoints a WAL database and runs VACUUM
 with `temp_store=MEMORY` (so the transient copy stays out of the OS temp
@@ -25,7 +27,7 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import audit_writer
+from . import audit_blind, audit_writer
 from .erase_plan import EraseTargetNotFound, Selection, plan_erase
 from .erase_receipt import build_receipt, legacy_audit_rows
 
@@ -152,8 +154,10 @@ def _erase_in_transaction(store, selection: Selection, expected: str, reason: st
                  + [x for s in subjects for x in s.locators()])
     legacy = legacy_audit_rows(store.conn, subjects)
     openings = _delete_and_audit(store.conn, subjects, reason)
+    salts = audit_blind.delete_salts(store.conn, plan["memories"])
     texts = [s.text for s in subjects] + [s.origin for s in subjects if s.origin]
-    return {"plan": plan, "texts": texts, "legacy": legacy, "openings": openings}
+    return {"plan": plan, "texts": texts, "legacy": legacy, "openings": openings,
+            "salts_deleted": salts}
 
 
 def _pragma(conn: sqlite3.Connection, name: str) -> int:

@@ -55,7 +55,7 @@ mneme --state mneme.db forget chat --session --yes              # a whole sessio
 
 Memories that only share a source turn with the target are collateral. The command lists them and asks; with `--yes` it refuses them until `--allow-collateral` is given. `--keep-sources` keeps the source turns. The reason is stored verbatim in the audit log, so a reason that repeats erased text is refused.
 
-The receipt reports what was removed, a scan of the database files for the erased bytes, and what the erase cannot remove: audit rows written before the erase still name erased rows by content-derived id, freed disk blocks can hold old bytes until reused, and exports, backups and other copies of the database file are out of reach. `mneme scrub` finishes a scrub that another open connection blocked.
+The receipt reports what was removed, a scan of the database files for the erased bytes, and what the erase cannot remove: audit rows written before the erase still name erased rows by content-derived id (their update and supersede values are salted commitments from schema 5, and the erase deletes the salts; rows from before schema 5 keep plain hashes and are counted), freed disk blocks can hold old bytes until reused, and exports, backups and other copies of the database file are out of reach. `mneme scrub` finishes a scrub that another open connection blocked.
 
 ## MCP
 

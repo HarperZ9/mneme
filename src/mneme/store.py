@@ -22,7 +22,7 @@ import weakref
 from collections.abc import Iterable
 from pathlib import Path
 
-from . import audit_writer, schema_guard, snapshot_dir
+from . import audit_blind, audit_writer, schema_guard, snapshot_dir
 from .receipt import ProvenanceFormatError, ProvenanceReceipt, memory_hash, validate_source_ids
 from .schema import MIGRATIONS, SCHEMA, SCHEMA_VERSION
 
@@ -402,18 +402,9 @@ class Store:
         """Close a memory's validity (a fact CHANGED, not erased): mark it
         superseded by `new_id` as of now, KEEPING it for temporal history. A
         forget erases a fact with its history; supersede preserves the timeline.
-        Returns the audit entry, or None if `old_id` is absent/already closed."""
-        row = self.memory(old_id)
-        if row is None or row["valid_until"] is not None:
-            return None
-        at = self._next_ord()
-        self.conn.execute(
-            "UPDATE memories SET valid_until=?, superseded_by=? WHERE id=?",
-            (at, new_id, old_id))
-        entry = self._audit("supersede", old_id, row["layer"],
-                            row["content_sha256"], "", reason or f"superseded by {new_id}")
-        self.conn.commit()
-        return entry
+        The audit entry holds a blinded value (audit_blind.py). Returns the
+        entry, or None if `old_id` is absent/already closed."""
+        return audit_blind.supersede(self, old_id, new_id, reason)
 
     def users(self) -> list[str]:
         rows = self.conn.execute('SELECT DISTINCT "user" FROM memories ORDER BY "user"').fetchall()
@@ -437,34 +428,16 @@ class Store:
         return audit_writer.append(self.conn, op, memory_id, layer, before, after, reason)
 
     def forget(self, memory_id: str, reason: str = "") -> dict | None:
-        """Row-level delete with a tombstone, for consolidation (the text survives
-        in the kept duplicate). A user's forget goes through erase.py, which also
-        removes source turns. Returns the audit entry, or None if absent."""
-        row = self.memory(memory_id)
-        if row is None:
-            return None
-        entry = self._audit("forget", memory_id, row["layer"],
-                            row["content_sha256"], "", reason)
-        self.conn.execute("DELETE FROM memories WHERE id=?", (memory_id,))
-        self.conn.commit()
-        return entry
+        """Row-level delete with a blinded tombstone, for consolidation (the text
+        survives in the kept duplicate). A user's forget goes through erase.py,
+        which also removes source turns. Returns the audit entry, or None if absent."""
+        return audit_blind.forget(self, memory_id, reason)
 
     def update(self, memory_id: str, new_text: str, reason: str = "") -> dict | None:
         """Replace a memory's text, re-deriving its hash and leaving an audit
-        entry (before/after hash, why). Provenance (sources, criterion) is kept."""
-        from .receipt import memory_hash
-        row = self.memory(memory_id)
-        if row is None:
-            return None
-        source_ids = json.loads(row["source_ids"])
-        after = memory_hash(new_text, source_ids, row["criterion"])
-        entry = self._audit("update", memory_id, row["layer"],
-                            row["content_sha256"], after, reason)
-        self.conn.execute(
-            "UPDATE memories SET text=?, content_sha256=? WHERE id=?",
-            (new_text, after, memory_id))
-        self.conn.commit()
-        return entry
+        entry with blinded before/after values (audit_blind.py) and the reason.
+        Provenance (sources, criterion) is kept."""
+        return audit_blind.update(self, memory_id, new_text, reason)
 
     def audit_log(self) -> list:
         return self.conn.execute("SELECT * FROM audit ORDER BY ord").fetchall()

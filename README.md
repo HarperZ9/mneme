@@ -304,8 +304,14 @@ content-derived id, the disk blocks SQLite released can hold old bytes until
 they are reused, and exports, backups and other copies of the database file
 are out of its reach.
 
-`update` edits a memory's text while keeping its provenance and recording the
-before/after hash. Tamper a tombstone and the chain breaks.
+`update` edits a memory's text while keeping its provenance, and `supersede`
+closes a fact while keeping it for history. From schema 5 their audit entries
+hold salted commitments to the old and new versions instead of plain hashes.
+The salts sit in the store under the memory they describe, so the history can
+be checked while the memory lives. An erase deletes the salts with the rows,
+and the entries then link to nothing. Entries written before schema 5 keep
+plain hashes, and the erase receipt counts them. Tamper any entry and the chain
+breaks.
 
 In 0.4.2 and earlier, `forget` deleted the memory row only and left the raw
 turn in the store.
@@ -383,8 +389,9 @@ cites its atoms, so it is drift-checkable too (a scenario whose atom is gone is
 - **Deterministic core.** Memory rows, their hashes and default rankings are
   derived from the supplied turns, so the same input rebuilds the same
   memories. Some values are random on purpose: the store id that names the
-  replay snapshot directory, and the refs and salted commitments in the audit
-  entries an erase writes, which keep those entries from confirming a guess of
+  replay snapshot directory, the refs and salted commitments in the audit
+  entries an erase writes, and the salted commitments in update, supersede and
+  row-level forget entries. They keep those entries from confirming a guess of
   what was erased.
 - **Tests are the contract.** The core workflows above have regression coverage
   with false-success controls for recall, drift, audit, and ingestion.

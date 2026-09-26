@@ -48,7 +48,10 @@ def test_tampered_row_is_drift(tmp_path):
     _sealed_db(db)
     conn = sqlite3.connect(str(db))
     conn.execute(
-        "UPDATE audit SET entry_sha='0'||substr(entry_sha,2) "
+        # flip the first hex digit; writing a fixed '0' was a no-op whenever the
+        # (random, since erase refs are random) hash already started with '0'
+        "UPDATE audit SET entry_sha=(CASE substr(entry_sha,1,1) WHEN '0' THEN '1' "
+        "ELSE '0' END)||substr(entry_sha,2) "
         "WHERE ord=(SELECT MIN(ord) FROM audit)")
     conn.commit()
     conn.close()

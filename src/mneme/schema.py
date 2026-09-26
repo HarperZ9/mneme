@@ -7,7 +7,7 @@ so a format change never surfaces as a raw sqlite traceback.
 """
 from __future__ import annotations
 
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
 
 # meta keys. store_id is a random id that names this store's replay snapshot
 # directory; the high-water mark only moves up, so a newer mneme can tell that
@@ -38,6 +38,13 @@ CREATE TABLE IF NOT EXISTS audit (
     layer TEXT NOT NULL, before_sha TEXT NOT NULL, after_sha TEXT NOT NULL,
     reason TEXT NOT NULL, entry_sha TEXT NOT NULL
 );
+-- schema 5: the salts of the blinded update, supersede and forget values in
+-- the audit log (audit_blind.py), kept under the memory each one describes.
+-- An erase deletes a memory's salts, after which its history links to nothing.
+CREATE TABLE IF NOT EXISTS salts (
+    value TEXT PRIMARY KEY, subject_id TEXT NOT NULL, salt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_salts_subject ON salts(subject_id);
 """
 
 # (table, column, decl) added after the first published schema; applied only

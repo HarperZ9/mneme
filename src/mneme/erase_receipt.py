@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from . import snapshot_dir
+from . import audit_blind, snapshot_dir
 from .erase_scan import scan_paths
 
 RECEIPT_SCHEMA = "mneme.erase-receipt/1"
@@ -19,29 +19,32 @@ SIDECARS = ("-journal", "-wal", "-shm")
 UNSALTED_OPS = ("forget", "update", "supersede")
 
 
-def blinded_ords(conn: sqlite3.Connection) -> set[int]:
-    """Audit rows whose hashes are salted commitments (none before schema 5)."""
-    return set()
-
-
 def legacy_audit_rows(conn: sqlite3.Connection, subjects) -> dict:
-    """Earlier audit rows that still name an erased row by content-derived value."""
+    """Earlier audit rows that still name an erased row by content-derived value.
+
+    `blinded` counts the rows whose hashes are schema 5 commitments; this erase
+    deletes their salts. `unsalted_hashes` counts rows from before schema 5 (or
+    written by an older mneme since) that keep a plain hash of a version."""
     ids = {s.id for s in subjects}
     hashes = {s.content_sha256 for s in subjects if s.content_sha256}
     long_ids = [i for i in ids if len(i) >= 12]
-    blinded = blinded_ords(conn)
-    count = unsalted = 0
-    for ord_, op, memory_id, before, after, reason in conn.execute(
-            "SELECT ord, op, memory_id, before_sha, after_sha, reason FROM audit"):
+    count = unsalted = blinded = 0
+    for op, memory_id, before, after, reason in conn.execute(
+            "SELECT op, memory_id, before_sha, after_sha, reason FROM audit"):
         if (memory_id in ids or before in hashes or after in hashes
                 or any(i in reason for i in long_ids)):
             count += 1
-            if op in UNSALTED_OPS and (before or after) and ord_ not in blinded:
-                unsalted += 1
-    return {"count": count, "unsalted_hashes": unsalted,
+            values = [v for v in (before, after) if v]
+            if op in UNSALTED_OPS and values:
+                if all(audit_blind.is_blinded(v) for v in values):
+                    blinded += 1
+                else:
+                    unsalted += 1
+    return {"count": count, "unsalted_hashes": unsalted, "blinded": blinded,
             "note": "audit rows written before this erase keep the content-derived "
-                    "ids (and, before schema 5, the unsalted hashes) of the rows they "
-                    "describe; the log is append-only, so they stay"}
+                    "ids of the rows they describe; the log is append-only, so they "
+                    "stay. Rows from before schema 5 also keep unsalted hashes. "
+                    "Blinded rows lose their salts in this erase and link to nothing"}
 
 
 def _db_path(conn: sqlite3.Connection) -> Path | None:
@@ -119,9 +122,12 @@ def _residue(work: dict, scan: dict, file_backed: bool) -> dict:
 
 
 def _rows_absent(conn: sqlite3.Connection, plan: dict) -> bool:
-    for table, ids in (("memories", plan["memories"]), ("turns", plan["turns"])):
+    for table, column, ids in (("memories", "id", plan["memories"]),
+                               ("turns", "id", plan["turns"]),
+                               ("salts", "subject_id", plan["memories"])):
         for item in ids:
-            if conn.execute(f"SELECT 1 FROM {table} WHERE id=?", (item,)).fetchone():
+            if conn.execute(f"SELECT 1 FROM {table} WHERE {column}=?",
+                            (item,)).fetchone():
                 return False
     return True
 
@@ -134,6 +140,7 @@ def build_receipt(store, work: dict, scrub: dict, *, reason: str,
     kept = kept_values(conn)
     scan = _scan(db, work["texts"], kept)
     structural = {"rows_absent": _rows_absent(conn, plan),
+                  "salts_deleted": work["salts_deleted"],
                   **{k: scrub[k] for k in ("freelist_count", "journal", "wal_bytes")}}
     clean = (scan["status"] != "hits" and structural["rows_absent"]
              and "remedy" not in scrub and not snapshots["failed"])

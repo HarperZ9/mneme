@@ -203,7 +203,7 @@ class AgentMemory:
 
     def update(self, memory_id: str, new_text: str, reason: str = "") -> dict | None:
         """Edit a memory's text, keeping its provenance and recording the
-        before/after hash in the audit log. None if the memory is absent."""
+        blinded before/after values in the audit log. None if the memory is absent."""
         return self.store.update(memory_id, new_text, reason)
 
     def audit(self) -> dict:
