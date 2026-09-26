@@ -207,7 +207,8 @@ class AgentMemory:
         return self.store.update(memory_id, new_text, reason)
 
     def audit(self) -> dict:
-        """The append-only, hash-chained history of every forget/update, with a
+        """The append-only, hash-chained history of every erase, forget, update
+        and supersede, with a
         verify verdict. What was known and when it changed is re-checkable."""
         rows = self.store.audit_log()
         return {"schema": "mneme.audit/1", "entries": len(rows),

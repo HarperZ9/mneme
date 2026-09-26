@@ -15,6 +15,9 @@ SCHEMA_VERSION = "5"
 META_STORE_ID = "store_id"
 META_SCHEMA_HIGH_WATER = "schema_high_water"
 META_SCHEMA_DOWNGRADE_SEEN = "schema_downgrade_seen"
+# set in an erase's transaction and cleared once its scrub and receipt finish;
+# while it is set, status and doctor tell the owner to run `mneme scrub`
+META_ERASE_PENDING = "erase_pending"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS turns (
@@ -40,11 +43,17 @@ CREATE TABLE IF NOT EXISTS audit (
 );
 -- schema 5: the salts of the blinded update, supersede and forget values in
 -- the audit log (audit_blind.py), kept under the memory each one describes.
--- An erase deletes a memory's salts, after which its history links to nothing.
+-- An erase deletes a memory's salts, after which those values open to nothing.
 CREATE TABLE IF NOT EXISTS salts (
     value TEXT PRIMARY KEY, subject_id TEXT NOT NULL, salt TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_salts_subject ON salts(subject_id);
+-- schema 5: consolidation's merge links. A near-duplicate merged away loses its
+-- row, but its source turns stay, so an erase of the kept memory reads them here.
+CREATE TABLE IF NOT EXISTS merges (
+    dropped_id TEXT PRIMARY KEY, kept_id TEXT NOT NULL, source_ids TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_merges_kept ON merges(kept_id);
 """
 
 # (table, column, decl) added after the first published schema; applied only

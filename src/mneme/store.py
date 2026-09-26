@@ -232,6 +232,7 @@ class Store:
             self.conn.executescript(SCHEMA)
             self._migrate()
             self.conn.commit()
+            snapshot_dir.startup_sweep()
         if self.private_snapshot_path is not None:
             self._private_finalizer = weakref.finalize(
                 self,
@@ -422,16 +423,13 @@ class Store:
 
     # -- accountable editing: forget / update leave a tombstone in an
     #    append-only, hash-chained audit log so the forgetting is itself auditable
-    def _audit(self, op: str, memory_id: str, layer: str, before: str,
-               after: str, reason: str) -> dict:
-        # no commit here: each caller commits its row change and this entry together
-        return audit_writer.append(self.conn, op, memory_id, layer, before, after, reason)
-
-    def forget(self, memory_id: str, reason: str = "") -> dict | None:
+    def forget(self, memory_id: str, reason: str = "", *,
+               merged_into: str | None = None) -> dict | None:
         """Row-level delete with a blinded tombstone, for consolidation (the text
-        survives in the kept duplicate). A user's forget goes through erase.py,
-        which also removes source turns. Returns the audit entry, or None if absent."""
-        return audit_blind.forget(self, memory_id, reason)
+        survives in the kept duplicate `merged_into`, which inherits the row's
+        sources as lineage). A user's forget goes through erase.py, which also
+        removes source turns. Returns the audit entry, or None if absent."""
+        return audit_blind.forget(self, memory_id, reason, merged_into=merged_into)
 
     def update(self, memory_id: str, new_text: str, reason: str = "") -> dict | None:
         """Replace a memory's text, re-deriving its hash and leaving an audit

@@ -4,8 +4,9 @@ The class advertises "white-box debugging: every intermediate artifact is
 visible." mneme's inspector shows the same layered artifacts AND the three
 things their dashboards cannot: each memory's provenance (the turn it came
 from), its live drift verdict (MATCH / DRIFT / UNVERIFIABLE), and the
-hash-chained audit log of every forget/update. One offline HTML file, no
-server, no network — the whole memory, and why you can trust each piece.
+hash-chained audit log of every erase, forget, update and supersede. One
+offline HTML file, no server, no network: the whole memory, and why you can
+trust each piece.
 
 Pure builder: `build_inspect` reads the store into a JSON-able snapshot;
 `render_inspect_html` renders it. Deterministic.
@@ -77,7 +78,8 @@ def render_inspect_html(snap: dict) -> str:
 <h1>mneme memory inspector</h1>
 <div class="sub">White-box view of the memory: {c['turns']} turns, {c['L1']} atoms,
 {c['L2']} scenarios, {c['L3']} persona. Every memory shows the turn it came from
-and its live drift verdict; the audit log below records every forget/update.
+and its live drift verdict; the audit log below records every erase, forget,
+update and supersede.
 Offline, self-contained.</div>"""]
 
     # L1-L3 with provenance + drift
@@ -109,7 +111,7 @@ Offline, self-contained.</div>"""]
         else '<span class="chip DRIFT">chain broken</span>'
     parts.append(f'<div class="tier audit"><h2>audit log — {a["entries"]} entries {intact}</h2>')
     if not a["log"]:
-        parts.append('<div class="empty">no forget/update recorded</div>')
+        parts.append('<div class="empty">no erase, forget, update or supersede recorded</div>')
     for e in a["log"]:
         parts.append(
             f'<div class="row"><span class="op {esc(e["op"])}">{esc(e["op"])}</span> '

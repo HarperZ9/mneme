@@ -95,3 +95,23 @@ def test_publication_guard_rejects_stale_readme_asset_url(tmp_path):
 
     with pytest.raises(ReleaseMetadataError, match="README"):
         verify_metadata(tmp_path, publication_tag="v0.4.1")
+
+
+@pytest.mark.parametrize("name", ["README.md", "USAGE.md"])
+def test_publication_guard_rejects_a_doc_that_still_calls_the_version_unreleased(
+        tmp_path, name):
+    _write_project(tmp_path)
+    doc = tmp_path / name
+    prior = doc.read_text(encoding="utf-8") if doc.exists() else ""
+    doc.write_text(prior + "\nFrom 0.4.1 (unreleased; install\nfrom source), forget "
+                   "erases turns.\n", encoding="utf-8")
+
+    with pytest.raises(ReleaseMetadataError, match=f"{name}.*unreleased"):
+        verify_metadata(tmp_path, publication_tag="v0.4.1")
+
+
+def test_an_unreleased_note_about_another_version_does_not_block_publication(tmp_path):
+    _write_project(tmp_path)
+    (tmp_path / "USAGE.md").write_text("From 0.9.0 (unreleased), more.\n", encoding="utf-8")
+
+    verify_metadata(tmp_path, publication_tag="v0.4.1")

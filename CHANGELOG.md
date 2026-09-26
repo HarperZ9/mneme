@@ -14,29 +14,57 @@ update and supersede history in the audit log. Not published.
   `CollateralError` with the plan unless `allow_collateral=True`, and the CLI
   asks, or refuses `--yes` without `--allow-collateral`. The CLI also erases
   by `--turn` or `--session`.
+- The plan also takes duplicates: turns and memories of the same user that
+  repeat an erased text whole, with what derives from them. They need the same
+  consent as collateral. Consolidation now records a merge link (`merges`
+  table) when it merges a near-duplicate away, and an erase of the kept memory
+  takes the merged row's source turns too. The plan digest binds each row's
+  content hash, so an edit between plan and confirm makes the plan stale.
 - One transaction deletes the rows and appends one `erase` audit entry per
   row, with `secure_delete` on. An entry names a random erase ref, never the
   content-derived id, and stores a salted commitment to the erased text whose
   salt is never stored; `mneme forget --emit-opening` prints the salts once. A
-  reason that repeats erased text is refused, because reasons are stored
-  verbatim.
+  reason that repeats erased text, or names an erased row's id, content hash
+  or the plan digest (any 12-character run), is refused, because reasons are
+  stored verbatim. The check catches verbatim repeats only.
 - After the commit, a WAL store is checkpointed, the file is vacuumed with
-  `temp_store=MEMORY`, this store's replay snapshots are removed, and the
-  database files are scanned for erased bytes. The receipt reports the scan
-  and, beside it, the residue the erase cannot remove (earlier audit rows that
-  name erased rows by content-derived id, freed disk blocks, texts under 16
-  bytes) and the copies out of its reach (exports, backups, other copies of the
-  file, replay snapshots older versions left in the OS temp directory).
-  `mneme scrub` finishes a scrub that another open connection blocked.
+  `temp_store=MEMORY`, this store's replay snapshots are removed (before the
+  transaction too), and the database files are scanned for erased bytes. The
+  receipt reports the scan and, beside it, the residue the erase cannot remove
+  (earlier audit rows that name erased rows by content-derived id, audit
+  reasons that quote erased text, other users' rows that repeat it, freed disk
+  blocks, texts under 16 bytes) and the copies out of its reach (exports,
+  backups, other copies of the file, text sent to a model provider, replay
+  snapshots older versions left in the OS temp directory, and other stores'
+  snapshots, which are scanned).
+- The receipt's `status` is `erased` only when every check passed, and
+  `findings` names the rest: `erased_residue_found`, `erased_copies_remain`,
+  `incomplete` (a file could not be read), `erased_sources_kept`, and
+  `erased_unverified` when a step after the commit failed. A failure after the
+  commit is no longer reported as a refusal. The CLI exits 3 for every status
+  but `erased` and `erased_sources_kept`.
+- The erase transaction sets `meta.erase_pending`; it is cleared when the
+  receipt is done. While it is set, status and doctor warn, and `mneme scrub`
+  finishes the work, removing the store's replay snapshots too.
+- The residual scan no longer caps the places it checks for each word, so kept
+  rows that share words with residue cannot hide it. Files in the shared temp
+  directory are opened without following links or blocking, skipped when
+  another user owns them, and not read past 1 GiB.
 - `AgentMemory.forget` returns the erase receipt instead of one audit entry.
   `Store.forget` stays the row-level primitive consolidation uses.
 - MCP `mneme.forget` returns the plan and deletes nothing unless the call
   carries `confirm_plan_sha256`. It returns ids and counts, text previews only
-  with `include_previews`, and never an opening.
+  with `include_previews`, and never an opening. The plan carries the number
+  of users, not their names. Applying a plan with collateral or duplicate rows
+  needs `allow_collateral: true`.
+- The CLI plan shows row text only on a terminal or with `--show-text`, and
+  `--dry-run` opens the database read-only. End of input at the prompt
+  refuses instead of raising.
 - Replay snapshots live in `<LocalAppData>/mneme/snapshots` on Windows and in
   `$XDG_STATE_HOME/mneme/snapshots` (or `~/.local/state/mneme/snapshots`)
-  elsewhere, under the store's random `store_id`, never beside the database. A
-  sweep removes snapshots whose process is gone.
+  elsewhere, under the store's random `store_id`, never beside the database.
+  Snapshots whose process is gone are swept when a writable store opens, when
+  the MCP server starts, when a snapshot is made and when an erase starts.
 - `meta.schema_high_water` records the highest schema that wrote a database.
   A lower `schema_version` on open means an older mneme reopened it: mneme
   warns, keeps the finding in `meta.schema_downgrade_seen`, and migrates
@@ -49,6 +77,9 @@ update and supersede history in the audit log. Not published.
   or `unsalted_hashes`. The row-level `forget` tombstone is blinded with a salt
   that is never stored, and it deletes the row's salts. Entries written before
   schema 5 keep their plain hashes, since rewriting them would break the chain.
+  All these entries still name the memory by its content-derived id. A
+  supersede without a reason stores "superseded" instead of the new version's
+  id, and a consolidation reason no longer names the kept memory's id.
   An `update` entry's `after_sha` no longer equals the row's `content_sha256`;
   `audit_blind.opens(conn, value, content_sha256)` checks it instead.
 - The row-level `forget`, `update` and `supersede` now write their audit entry
@@ -60,15 +91,21 @@ update and supersede history in the audit log. Not published.
   row counts and schema history, and the replay snapshot directory with
   counts. Both open the database read-only and never create it. They warn
   when the database sits inside a git work tree, when an older mneme reopened
-  it, when replay snapshots were left behind, and when the state keeps
-  nothing (`:memory:` or an empty path). `doctor` also re-derives the audit
-  chain and exits 1 on any warning.
+  it, when replay snapshots were left behind, when an erase has not finished,
+  and when the state keeps nothing (`:memory:` or an empty path). They count
+  unsalted forget entries and turns no memory cites, which a forget before
+  0.5.0 leaves. `doctor` also re-derives the audit chain and exits 1 on any
+  warning.
 - MCP `mneme.doctor` adds `state_path_absolute`, `state_from_env`, `kind`,
   `default_location`, `exists`, `git_work_tree`, `snapshot_dir`, `warnings`
   and `notes`, and never opens the database. `state_path` keeps its meaning:
-  the configured value.
+  the configured value. The home directory is written as `~` in its paths.
 - Docs, docstrings and runtime strings no longer call forget a legal erasure;
-  they say what it removes and what it leaves. The 0.1.0 entry below keeps its
+  they say what it removes and what it leaves. The README no longer calls
+  mneme fully local: the store stays local, and text sent to an extractor,
+  embedder or MCP client goes to that model's provider.
+- Publication mode of `verify_release_metadata.py` fails when README or
+  USAGE still calls the tagged version unreleased. The 0.1.0 entry below keeps its
   wording, followed by a dated correction.
 
 ## 0.4.2 (2026-09-22)

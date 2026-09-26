@@ -23,9 +23,11 @@ def section(title: str) -> None:
     print(f"\n\033[1m{title}\033[0m" if sys.stdout.isatty() else f"\n== {title} ==")
 
 
-def main() -> int:
-    mem = AgentMemory(":memory:")
+def _plural(count: int, word: str) -> str:
+    return f"{count} {word}" + ("" if count == 1 else "s")
 
+
+def remember(mem: AgentMemory) -> None:
     section("1. remember — turns in, atomic facts out (each with provenance)")
     summary = mem.remember("alice", [
         {"role": "user", "text": "My name is Alice and I live in Portland."},
@@ -39,6 +41,8 @@ def main() -> int:
     for p in summary["provenance"]:
         print(f"    - atom {p['memory_id'][:8]}… from turn {p['source_ids'][0]}")
 
+
+def recall(mem: AgentMemory) -> None:
     section("2. recall — with a receipt a third party can re-run")
     r = mem.recall("tea or coffee preference", strategy="keyword")
     for h in r.hits:
@@ -48,6 +52,8 @@ def main() -> int:
     assert [h.memory_id for h in r.hits] == [h.memory_id for h in again.hits]
     print("  re-ran the scorer: identical ranking (the recall is re-derivable)")
 
+
+def drift(mem: AgentMemory) -> None:
     section("3. drift — a memory whose source changes flags itself")
     print(f"  before: {mem.drift()['overall']}")
     mem.store.add_turn("t-portland", "alice", "user",
@@ -60,16 +66,21 @@ def main() -> int:
     print(f"  after a source changed: {mem.drift()['overall']} "
           "(stale memory says so, it is not silently served)")
 
+
+def forget(mem: AgentMemory) -> None:
     section("4. forget: erasure you can audit")
     mid = mem.store.memories(layer="L1")[-1]["id"]
     receipt = mem.forget(mid, reason="user requested deletion")
     audit = mem.audit()
     erased = sum(receipt["counts"]["memories"].values())
-    print(f"  erased {erased} memory row and {receipt['counts']['turns']} source turn; "
-          f"{audit['entries']} tombstones, chain intact: {audit['chain_intact']}")
+    print(f"  erased {_plural(erased, 'memory row')} and "
+          f"{_plural(receipt['counts']['turns'], 'source turn')}; "
+          f"{_plural(audit['entries'], 'tombstone')}, chain intact: {audit['chain_intact']}")
     assert audit["chain_intact"] and receipt["status"] == "erased"
     assert mem.store.memory(mid) is None
 
+
+def ecosystem() -> None:
     section("5. ecosystem — a memory that traces to its web source")
     mem2 = AgentMemory(":memory:")
     mem2.ingest_gather("research", [{
@@ -82,8 +93,16 @@ def main() -> int:
     print(f"  recalled: {hit.text!r}")
     print(f"  traces to: {origin['source']} · {origin['ref']} · sha256 {origin['sha256'][:12]}…")
     assert chain["externally_grounded"]
-    print("  the recalled memory provably traces to the source it was gathered from.")
+    print("  the recalled memory traces to the source it was gathered from.")
 
+
+def main() -> int:
+    mem = AgentMemory(":memory:")
+    remember(mem)
+    recall(mem)
+    drift(mem)
+    forget(mem)
+    ecosystem()
     section("done — every step above carried a re-checkable receipt")
     return 0
 

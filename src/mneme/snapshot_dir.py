@@ -12,8 +12,13 @@ Each writable store carries a random `store_id` in meta, and its snapshots go
 under `<root>/<store_id>/`, so an erase can find and remove every copy of the
 store it just changed. A source without a valid id (read-only, legacy, or a
 hostile value) maps to `<root>/unkeyed/<sha256 of its resolved path>/`. File
-names carry the creating process id, and whenever mneme creates a snapshot it
-first sweeps snapshots whose process is gone.
+names carry the creating process id. Snapshots whose process is gone are
+swept when a writable store opens, when the MCP server starts, when mneme
+creates a snapshot, and when an erase starts.
+
+On POSIX an unlink succeeds while another process holds the file open, and
+that process can keep reading it. A snapshot removed while its creating
+process still runs is therefore reported as a copy that may remain.
 """
 from __future__ import annotations
 
@@ -23,16 +28,21 @@ import re
 import secrets
 import sqlite3
 import stat
+import logging
 import tempfile
 from pathlib import Path
 
 from .audit_writer import meta_get, meta_set
+from .os_facts import known_local_appdata as _known_local_appdata
+from .os_facts import pid_alive as _pid_alive
 from .schema import META_STORE_ID
 
 STORE_ID_PATTERN = r"st_[0-9a-f]{32}"
 SNAPSHOT_GLOB = "mneme-replay-*.db"
 SIDECARS = ("-journal", "-wal", "-shm")
 _NAME = re.compile(r"mneme-replay-(\d+)-[A-Za-z0-9_]+\.db")
+UNLINK_KEEPS_OPEN_FILES = os.name != "nt"
+_LOG = logging.getLogger("mneme")
 
 
 def new_store_id() -> str:
@@ -62,32 +72,9 @@ def ensure_store_id(conn: sqlite3.Connection) -> str:
     return fresh
 
 
-def _known_local_appdata() -> Path:
-    import ctypes
-    from ctypes import wintypes
-
-    class GUID(ctypes.Structure):
-        _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD),
-                    ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8)]
-
-    local_appdata = GUID(0xF1B32785, 0x6FBA, 0x4FCF, (ctypes.c_ubyte * 8)(
-        0x9D, 0x55, 0x7B, 0x8E, 0x7F, 0x15, 0x70, 0x91))
-    get_path = ctypes.windll.shell32.SHGetKnownFolderPath
-    get_path.argtypes = [ctypes.POINTER(GUID), wintypes.DWORD, wintypes.HANDLE,
-                         ctypes.POINTER(ctypes.c_wchar_p)]
-    get_path.restype = ctypes.c_long
-    out = ctypes.c_wchar_p()
-    if get_path(ctypes.byref(local_appdata), 0, None, ctypes.byref(out)) != 0:
-        raise OSError("SHGetKnownFolderPath(LocalAppData) failed")
-    try:
-        return Path(out.value)
-    finally:
-        ctypes.windll.ole32.CoTaskMemFree(ctypes.cast(out, ctypes.c_void_p))
-
-
-def platform_snapshot_root() -> Path:
-    """The per-user snapshot root for this platform."""
-    if os.name == "nt":
+def platform_snapshot_root(*, system: str | None = None) -> Path:
+    """The per-user snapshot root for this platform (`system` defaults to os.name)."""
+    if (system or os.name) == "nt":
         try:
             base = _known_local_appdata()
         except (OSError, AttributeError):
@@ -159,33 +146,6 @@ def create_snapshot_file(source_path: Path) -> tuple[int, str]:
                             dir=directory)
 
 
-def _pid_alive(pid: int) -> bool:
-    if os.name != "nt":
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
-        return True
-    import ctypes
-    from ctypes import wintypes
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-    kernel32.OpenProcess.restype = wintypes.HANDLE
-    handle = kernel32.OpenProcess(0x1000, False, pid)   # QUERY_LIMITED_INFORMATION
-    if not handle:
-        return ctypes.get_last_error() == 5                # access denied: it exists
-    try:
-        code = wintypes.DWORD()
-        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
-            return True
-        return code.value == 259                             # STILL_ACTIVE
-    finally:
-        kernel32.CloseHandle(handle)
-
-
 def _remove_with_sidecars(path: Path) -> bool:
     ok = True
     for candidate in (path, *(Path(f"{path}{s}") for s in SIDECARS)):
@@ -238,6 +198,15 @@ def sweep_orphans(root: Path | None = None) -> dict:
     return counts
 
 
+def startup_sweep() -> dict | None:
+    """Sweep orphans; a failure is logged, never raised, so opening a store works."""
+    try:
+        return sweep_orphans()
+    except OSError as exc:
+        _LOG.warning("mneme: could not sweep orphaned replay snapshots: %s", exc)
+        return None
+
+
 def _directories(store_id: str | None, source_path: Path | None) -> list[Path]:
     """The keyed directory and the by-path directory a store's snapshots can use."""
     found = {store_dir(store_id, None), store_dir(None, source_path)}
@@ -253,16 +222,34 @@ def store_snapshot_counts(store_id: str | None, source_path: Path | None) -> dic
     return counts
 
 
+def _held_elsewhere(path: Path) -> bool:
+    match = _NAME.fullmatch(path.name)
+    return (UNLINK_KEEPS_OPEN_FILES and match is not None
+            and int(match.group(1)) != os.getpid() and _pid_alive(int(match.group(1))))
+
+
 def remove_store_snapshots(store_id: str | None, source_path: Path | None) -> dict:
-    """Remove every snapshot of this store, live or not, keyed or by path."""
-    removed, failed = 0, []
+    """Remove every snapshot of this store, live or not, keyed or by path.
+
+    `removed_while_live` counts removed snapshots whose creating process still
+    runs, where an open handle can outlive the unlink."""
+    removed, failed, live = 0, [], 0
     for directory in _directories(store_id, source_path):
         for path in _snapshot_files(directory):
+            held = _held_elsewhere(path)
             if _remove_with_sidecars(path):
                 removed += 1
+                live += held
             else:
                 failed.append(path)
-    return {"removed": removed, "failed": failed}
+    return {"removed": removed, "failed": failed, "removed_while_live": live}
+
+
+def other_snapshots(store_id: str | None, source_path: Path | None) -> list[Path]:
+    """Snapshots under the root that belong to other stores."""
+    own = set(_directories(store_id, source_path))
+    return [path for directory in _store_dirs(snapshot_root()) if directory not in own
+            for path in _snapshot_files(directory)]
 
 
 def legacy_temp_snapshots() -> list[Path]:

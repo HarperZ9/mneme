@@ -10,8 +10,15 @@ later erase. From schema 5 each value is a commitment
 with a fresh 32-byte salt. The salt is kept in the `salts` table under the
 memory the value describes, so while the memory lives its owner can open the
 history (`opens`). An erase deletes those salts in the same transaction as the
-rows, and the commitments then link to nothing. A row-level forget deletes the
-row, so its tombstone salt is never stored and the row's earlier salts go too.
+rows, and the commitments then open to nothing. The entries still name the
+memory by its content-derived id, which can confirm a guessed text when its
+source turn id is known; the erase receipt counts such rows. A row-level
+forget deletes the row, so its tombstone salt is never stored and the row's
+earlier salts go too. When consolidation merges a row away, the same
+transaction records the merge link (kept id, dropped id, dropped sources).
+
+A supersede without a reason stores "superseded". It used to store
+"superseded by <new id>", a content-derived id of the new version.
 
 Each operation changes the row, stores its salts and appends its audit entry
 in one transaction, and rolls all of it back on any failure.
@@ -97,7 +104,7 @@ def supersede(store, old_id: str, new_id: str, reason: str = "") -> dict | None:
                      (at, new_id, old_id))
         before = record(conn, old_id, row["content_sha256"])
         return audit_writer.append(conn, "supersede", old_id, row["layer"], before, "",
-                                   reason or f"superseded by {new_id}")
+                                   reason or "superseded")
     return _atomically(conn, change)
 
 
@@ -119,7 +126,8 @@ def update(store, memory_id: str, new_text: str, reason: str = "") -> dict | Non
     return _atomically(conn, change)
 
 
-def forget(store, memory_id: str, reason: str = "") -> dict | None:
+def forget(store, memory_id: str, reason: str = "", *,
+           merged_into: str | None = None) -> dict | None:
     """Row-level delete with a blinded tombstone (see Store.forget)."""
     row = store.memory(memory_id)
     if row is None:
@@ -129,6 +137,9 @@ def forget(store, memory_id: str, reason: str = "") -> dict | None:
     def change() -> dict:
         conn.execute("DELETE FROM memories WHERE id=?", (memory_id,))
         delete_salts(conn, (memory_id,))
+        if merged_into is not None:
+            conn.execute("INSERT OR REPLACE INTO merges(dropped_id, kept_id, source_ids) "
+                         "VALUES(?,?,?)", (memory_id, merged_into, row["source_ids"]))
         return audit_writer.append(conn, "forget", memory_id, row["layer"],
                                    unopenable(row["content_sha256"]), "", reason)
     return _atomically(conn, change)

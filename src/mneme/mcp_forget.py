@@ -1,10 +1,13 @@
 """mcp_forget.py: the MCP forget tool, in two steps.
 
 An MCP result enters a model context and so reaches that model's provider.
-The tool therefore returns ids and counts, shows memory text only when the
-caller asks for previews, and never returns the openings of the erase
+The plan therefore carries the targets, row ids and counts, never the tenant
+names (only their count), shows memory text only when the caller asks for
+previews, and the receipt never carries the openings of the erase
 commitments. A call with only `memory_id` returns the plan and deletes
-nothing; a second call with `confirm_plan_sha256` applies exactly that plan.
+nothing; a second call with `confirm_plan_sha256` applies exactly that plan,
+and it needs `allow_collateral: true` as well when the plan lists collateral
+or duplicate rows, which the model may never have seen.
 
 The model that asked for the plan can send the digest too, so this step does
 not tell the owner apart from a model. A host that launches mneme for an agent
@@ -18,28 +21,33 @@ import re
 from .erase import EraseTargetNotFound, Selection, apply_erase, plan_erase
 
 ALLOWED = {"memory_id", "reason", "keep_sources", "include_previews",
-           "confirm_plan_sha256"}
+           "confirm_plan_sha256", "allow_collateral"}
 TOOL = {
     "name": "mneme.forget",
     "description": "Erase a memory with its source turns and everything derived from "
                    "them (scenarios, persona lines, supersession history). Without "
-                   "confirm_plan_sha256 it returns the plan (ids, counts, collateral "
-                   "that shares a source turn) and deletes nothing; with the plan's "
-                   "digest it applies exactly that plan and returns a receipt of what "
-                   "it removed and what residue remains. Text previews only with "
-                   "include_previews.",
+                   "confirm_plan_sha256 it returns the plan (targets, ids, counts, "
+                   "collateral that shares a source turn, duplicates that repeat the "
+                   "text) and deletes nothing; with the plan's digest, plus "
+                   "allow_collateral when the plan lists collateral or duplicates, it "
+                   "applies exactly that plan and returns a receipt of what it removed "
+                   "and what remains. Text previews only with include_previews.",
     "inputSchema": {"type": "object", "required": ["memory_id"], "properties": {
         "memory_id": {"type": "string"},
         "reason": {"type": "string",
                    "description": "stored verbatim in the audit log; may not repeat "
-                                  "erased text"},
+                                  "erased text or name an erased row's id or digest "
+                                  "(only verbatim repeats are caught)"},
         "keep_sources": {"type": "boolean",
                          "description": "keep the source turns (default false)"},
         "include_previews": {"type": "boolean",
                              "description": "show the text of collateral and lineage "
                                             "rows in the plan (default false)"},
         "confirm_plan_sha256": {"type": "string",
-                                "description": "the plan_sha256 of the plan to apply"}}},
+                                "description": "the plan_sha256 of the plan to apply"},
+        "allow_collateral": {"type": "boolean",
+                             "description": "consent to erase the plan's collateral and "
+                                            "duplicate rows (default false)"}}},
 }
 
 
@@ -74,9 +82,14 @@ def call(memory, args: dict) -> str:
         plan = plan_erase(memory.store, selection, previews=previews)
     except EraseTargetNotFound as exc:
         raise ValueError(str(exc)) from exc
+    plan.pop("users", None)                  # tenant names stay out of the model context
     if confirm is None:
         plan["next"] = ("nothing was deleted; to apply this exact plan, call "
                         "mneme.forget again with confirm_plan_sha256")
         return json.dumps(plan, indent=2, ensure_ascii=False)
+    extra = plan["counts"]["collateral"] + plan["counts"]["duplicates"]
+    if extra and confirm == plan["plan_sha256"] and not _flag(args, "allow_collateral"):
+        raise ValueError(f"the plan also erases {extra} collateral or duplicate rows; "
+                         "review them and call again with allow_collateral: true")
     receipt = apply_erase(memory.store, selection, confirm, reason=reason)
     return json.dumps(receipt, indent=2, ensure_ascii=False)

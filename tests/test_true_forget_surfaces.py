@@ -1,6 +1,6 @@
 """Falsifiers for the forget surfaces: CLI and MCP.
 
-The CLI runs on the owner's machine, so it may show collateral text and, on
+The CLI shows collateral text on a terminal or with --show-text and, on
 request, the openings of the erase commitments. An MCP result enters a model
 context and reaches its provider, so the MCP tool returns ids and counts, shows
 text only when asked, never returns an opening, and deletes nothing until the
@@ -48,11 +48,11 @@ def _forget(db, *args):
     return main(["--state", str(db), "forget", *args])
 
 
-def test_cli_dry_run_prints_the_plan_with_local_previews_and_deletes_nothing(
+def test_cli_dry_run_prints_the_plan_with_previews_on_request_and_deletes_nothing(
         tmp_path, capsys):
     db, ids = _db(tmp_path)
 
-    assert _forget(db, ids["Denver"], "--dry-run") == 0
+    assert _forget(db, ids["Denver"], "--dry-run", "--show-text") == 0
 
     plan = json.loads(capsys.readouterr().out)
     assert plan["schema"] == "mneme.erase-plan/1"
@@ -208,7 +208,7 @@ def test_mcp_confirm_applies_exactly_that_plan_and_returns_no_opening(mcp_state)
     plan = json.loads(_mcp({"memory_id": ids["Denver"]})["content"][0]["text"])
 
     result = _mcp({"memory_id": ids["Denver"], "reason": "user asked",
-                   "confirm_plan_sha256": plan["plan_sha256"]})
+                   "confirm_plan_sha256": plan["plan_sha256"], "allow_collateral": True})
 
     assert result["isError"] is False
     receipt = json.loads(result["content"][0]["text"])

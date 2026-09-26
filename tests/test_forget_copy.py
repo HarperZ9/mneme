@@ -63,3 +63,39 @@ def test_the_check_flags_planted_phrases_and_accepts_a_dated_correction(tmp_path
         encoding="utf-8")
 
     assert findings(tmp_path) == ["late.md:1", "plain.md:1", "wrapped.py:1"]
+
+
+LOCALITY = re.compile(r"fully\s+local|stays\s+on\s+your\s+machine", re.IGNORECASE)
+QUALIFIER = re.compile(r"provider", re.IGNORECASE)
+
+
+def locality_findings(root: Path) -> list[str]:
+    """A locality claim must name, in the same paragraph, what leaves the machine."""
+    found = []
+    for path in _files(root):
+        if path.suffix != ".md":
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for paragraph_start, paragraph in _paragraphs(text):
+            if LOCALITY.search(paragraph) and not QUALIFIER.search(paragraph):
+                line_no = text.count("\n", 0, paragraph_start) + 1
+                found.append(f"{path.relative_to(root)}:{line_no}")
+    return found
+
+
+def _paragraphs(text: str):
+    for match in re.finditer(r"\S(?:.|\n(?![ \t]*\n))*", text):
+        yield match.start(), match.group(0)
+
+
+def test_no_doc_claims_locality_without_naming_model_providers():
+    assert locality_findings(ROOT) == []
+
+
+def test_the_locality_check_flags_a_bare_claim_and_accepts_a_qualified_one(tmp_path):
+    (tmp_path / "bare.md").write_text("Zero deps, fully local.\n", encoding="utf-8")
+    (tmp_path / "ok.md").write_text(
+        "Local by default: the store stays on your machine; text you send to an\n"
+        "LLM extractor goes to that model's provider.\n", encoding="utf-8")
+
+    assert locality_findings(tmp_path) == ["bare.md:1"]

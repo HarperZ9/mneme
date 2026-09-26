@@ -10,8 +10,15 @@ SQLite splits long text across overflow pages, each of which begins with a
 4-byte page pointer, so a whole-string search misses stored text. The scan
 indexes every 8-byte window of each erased text and intersects that index with
 the file's 8-byte-aligned words. Any surviving run of 15 bytes or more
-contains one aligned word, and each candidate is extended both ways and kept
-only when it reaches 16 bytes. The work is linear in file size.
+contains one aligned word, so every aligned place where an indexed word
+occurs is extended both ways and kept when it reaches 16 bytes. There is no
+cap on places or index entries: a cap let kept rows that share a word with
+the residue, earlier in the file, hide it.
+
+Files are opened as regular files only. A foreign copy (a file in a shared
+temp directory) is opened without following a link and without blocking,
+skipped when another user owns it, and not read when it is larger than the
+cap; the result names each file it did not scan and why.
 
 Texts shorter than 16 bytes cannot be told apart from ordinary bytes, so they
 are counted as short texts and left to structural checks.
@@ -21,6 +28,8 @@ the listed files, or other encodings are free of the text.
 """
 from __future__ import annotations
 
+import os
+import stat
 import sys
 from pathlib import Path
 
@@ -31,7 +40,15 @@ _BLOCK = 1 << 25                   # 32 MiB, a multiple of 8
 _OVERLAP = 1 << 16                 # runs that cross a block edge stay whole
 _SEP = b"\x00" * 8                 # no text run spans eight NUL bytes
 _MAX_EXTEND = 1 << 12
-_MAX_POSITIONS = 64
+SKIPPED = ("foreign_owner", "not_regular")      # not a copy of ours; others are unscanned
+
+
+class NotScanned(OSError):
+    """A file the scan did not read, with the reason."""
+
+    def __init__(self, why: str):
+        super().__init__(why)
+        self.why = why
 
 
 def _encode(texts: list[str]) -> list[tuple[int, str, bytes]]:
@@ -44,9 +61,7 @@ def _index(encoded) -> dict[int, list[tuple[int, int]]]:
     for slot, (_i, _form, data) in enumerate(encoded):
         for offset in range(len(data) - _K + 1):
             key = int.from_bytes(data[offset:offset + _K], sys.byteorder)
-            bucket = index.setdefault(key, [])
-            if len(bucket) < 16:
-                bucket.append((slot, offset))
+            index.setdefault(key, []).append((slot, offset))
     return index
 
 
@@ -83,12 +98,8 @@ def _matches(block: bytes, index, keys: set[int], encoded, skip: set[int]):
     if usable == 0:
         return
     for value in keys.intersection(memoryview(block)[:usable].cast("Q")):
-        probe, start = value.to_bytes(_K, sys.byteorder), 0
-        for _ in range(_MAX_POSITIONS):
-            pos = block.find(probe, start)
-            if pos < 0:
-                break
-            start = pos + 1
+        probe = value.to_bytes(_K, sys.byteorder)
+        for pos in _aligned(block, probe, usable):
             for slot, offset in index[value]:
                 if encoded[slot][0] in skip:
                     continue
@@ -97,22 +108,52 @@ def _matches(block: bytes, index, keys: set[int], encoded, skip: set[int]):
                     yield slot, begin, length
 
 
-def _blocks(path: Path):
-    with path.open("rb") as handle:
-        position = 0
-        while True:
-            handle.seek(position)
-            data = handle.read(_BLOCK + _OVERLAP)
-            if data:
-                yield data
-            if len(data) < _BLOCK + _OVERLAP:
-                return
-            position += _BLOCK
+def _aligned(block: bytes, probe: bytes, usable: int):
+    pos = block.find(probe, 0, usable)
+    while pos >= 0:
+        if pos % _K == 0:
+            yield pos
+            pos = block.find(probe, pos + _K, usable)
+        else:
+            pos = block.find(probe, pos + (_K - pos % _K), usable)
 
 
-def _residue(path: Path, index, keys, encoded, corpus: dict[str, bytes]) -> set[int]:
+def open_for_scan(path: Path, *, foreign: bool = False, max_bytes: int | None = None):
+    """Open a regular file for reading, or raise NotScanned / OSError."""
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    if foreign:
+        flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    fd = os.open(path, flags)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise NotScanned("not_regular")
+        if foreign and hasattr(os, "getuid") and info.st_uid != os.getuid():
+            raise NotScanned("foreign_owner")
+        if max_bytes is not None and info.st_size > max_bytes:
+            raise NotScanned("too_large")
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _blocks(handle, max_bytes: int | None):
+    position = 0
+    while max_bytes is None or position < max_bytes:
+        handle.seek(position)
+        data = handle.read(_BLOCK + _OVERLAP)
+        if data:
+            yield data
+        if len(data) < _BLOCK + _OVERLAP:
+            return
+        position += _BLOCK
+
+
+def _residue(handle, index, keys, encoded, corpus: dict[str, bytes],
+             max_bytes: int | None) -> set[int]:
     found: set[int] = set()
-    for block in _blocks(path):
+    for block in _blocks(handle, max_bytes):
         for slot, begin, length in _matches(block, index, keys, encoded, found):
             text_no, form, data = encoded[slot]
             if data[begin:begin + length] not in corpus[form]:
@@ -129,8 +170,17 @@ def _overlap(index, keys, encoded, corpus: dict[str, bytes]) -> set[int]:
     return shared
 
 
-def scan_paths(paths, texts, kept) -> dict:
-    """Scan `paths` for runs of `texts` that no string in `kept` explains."""
+def _scan_one(path: Path, scan, foreign: bool, max_bytes: int | None) -> set[int]:
+    with open_for_scan(path, foreign=foreign, max_bytes=max_bytes) as handle:
+        return _residue(handle, *scan, max_bytes)
+
+
+def scan_paths(paths, texts, kept, *, foreign: bool = False,
+               max_bytes: int | None = None) -> dict:
+    """Scan `paths` for runs of `texts` that no string in `kept` explains.
+
+    `unreadable` and `not_scanned` name files the scan could not read; `skipped`
+    names foreign files that are not ours to read (another owner, not a file)."""
     unique = list(dict.fromkeys(t for t in texts if t))
     long_texts = [t for t in unique if len(t.encode("utf-8")) >= W]
     encoded = _encode(long_texts)
@@ -139,14 +189,18 @@ def scan_paths(paths, texts, kept) -> dict:
     corpus = {form: _SEP.join(k.encode(form, "surrogatepass") for k in kept)
               for form in FORMS}
     per_file: dict[str, set[int]] = {}
-    unreadable = []
+    unreadable, not_scanned, skipped = [], [], []
     for path in map(Path, paths):
         try:
-            per_file[path.name] = _residue(path, index, keys, encoded, corpus)
+            per_file[path.name] = _scan_one(path, (index, keys, encoded, corpus),
+                                            foreign, max_bytes)
+        except NotScanned as exc:
+            (skipped if exc.why in SKIPPED else not_scanned).append(path.name)
         except OSError:
             unreadable.append(path.name)
     hit_texts = set().union(*per_file.values()) if per_file else set()
     return {"files": sorted(per_file), "unreadable": unreadable,
+            "not_scanned": not_scanned, "skipped": skipped,
             "files_with_hits": sorted(name for name, hit in per_file.items() if hit),
             "texts_scanned": len(long_texts), "texts_with_hits": len(hit_texts),
             "short_texts": len(unique) - len(long_texts),

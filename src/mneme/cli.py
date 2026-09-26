@@ -260,7 +260,8 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--reason", default="")
     up.set_defaults(func=cmd_update)
 
-    au = sub.add_parser("audit", help="show the hash-chained history of every forget/update")
+    au = sub.add_parser("audit", help="show the hash-chained history of every erase, "
+                                          "forget, update and supersede")
     au.set_defaults(func=cmd_audit)
 
     insp = sub.add_parser("inspect", help="render a self-contained white-box HTML view of the memory")

@@ -6,23 +6,21 @@ log is append-only, so those hashes outlived an erase and could confirm a guess
 of what was erased. From schema 5 each such value is a salted commitment
 `b1:` + sha256(tag || 0x00 || salt || content_sha256). The salt sits in the
 `salts` table under the memory it describes, and an erase deletes it in the
-same transaction as the rows, after which the commitment links to nothing.
+same transaction as the rows, after which the commitment opens to nothing.
+Migration from a real 0.4.2 database is in test_legacy_042.py.
 """
 from __future__ import annotations
 
 import hashlib
 import re
-import sqlite3
 import subprocess
 import sys
-import warnings
 from pathlib import Path
 
 import pytest
 
 from mneme import AgentMemory, audit_blind, audit_writer
 from mneme.receipt import content_hash
-from mneme.schema import SCHEMA_VERSION
 
 TURNS = [
     {"id": "t1", "role": "user", "text": "I live in Denver."},
@@ -188,43 +186,3 @@ def test_a_failure_before_commit_leaves_no_salt_row_change_or_audit_entry(monkey
     assert memory.store.memory(atom)["text"] == text
     assert memory.store.conn.execute("SELECT COUNT(*) FROM salts").fetchone()[0] == 0
     assert len(memory.store.audit_log()) == entries
-
-
-def _schema_4_database(db) -> str:
-    """A database as mneme at schema 4 left it: one unsalted update row, no salts table."""
-    memory = _memory(db)
-    atom = _atom(memory, "Denver")
-    row = memory.store.memory(atom)
-    conn = memory.store.conn
-    new_sha = "e" * 64
-    conn.execute("UPDATE memories SET text=?, content_sha256=? WHERE id=?",
-                 ("I live in Denver, CO.", new_sha, atom))
-    audit_writer.append(conn, "update", atom, "L1", row["content_sha256"], new_sha, "old")
-    conn.execute("DROP TABLE salts")
-    for key in ("schema_version", "schema_high_water"):
-        conn.execute("UPDATE meta SET value='4' WHERE key=?", (key,))
-    conn.commit()
-    memory.close()
-    return atom
-
-
-def test_a_schema_4_database_migrates_and_its_earlier_rows_are_counted(tmp_path):
-    db = tmp_path / "legacy.db"
-    atom = _schema_4_database(db)
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        memory = AgentMemory(db)
-    assert SCHEMA_VERSION == "5"
-    assert memory.store._meta_get("schema_version") == "5"
-    assert memory.store._meta_get("schema_high_water") == "5"
-    memory.update(atom, "I live in Denver, Colorado.", reason="precise")
-    receipt = memory.forget(atom, reason="user asked")
-
-    legacy = receipt["residue"]["legacy_audit_rows"]
-    assert legacy == {**legacy, "count": 2, "unsalted_hashes": 1, "blinded": 1}
-    assert memory.audit()["chain_intact"] is True
-    memory.close()
-    tables = {r[0] for r in sqlite3.connect(db).execute(
-        "SELECT name FROM sqlite_master WHERE type='table'")}
-    assert "salts" in tables

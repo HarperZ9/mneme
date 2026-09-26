@@ -20,6 +20,23 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
+LEGACY_042_SQL = Path(__file__).resolve().parent / "fixtures" / "mneme-0.4.2.sql"
+
+
+@pytest.fixture
+def legacy_042_db(tmp_path) -> Path:
+    """A database as released mneme 0.4.2 wrote it (tests/fixtures/build_mneme_042.py)."""
+    import sqlite3
+
+    db = tmp_path / "legacy-0.4.2.db"
+    conn = sqlite3.connect(db)
+    try:
+        conn.executescript(LEGACY_042_SQL.read_text(encoding="utf-8"))
+    finally:
+        conn.close()
+    return db
+
+
 @pytest.fixture(autouse=True)
 def snapshot_root(tmp_path_factory, monkeypatch) -> Path:
     import mneme.snapshot_dir as snapshot_dir

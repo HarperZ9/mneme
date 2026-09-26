@@ -17,7 +17,7 @@ import os
 import sys
 from typing import Any
 
-from . import __version__, mcp_forget, state_report
+from . import __version__, mcp_forget, snapshot_dir, state_report
 from .memory import AgentMemory
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
@@ -124,8 +124,8 @@ def _tool_defs() -> list[dict]:
                              "description": "default gather.docs.file-read/v1"}}}},
         mcp_forget.TOOL,                        # two-step plan, then confirm
         {"name": "mneme.audit",
-         "description": "The hash-chained history of every forget/update, with a "
-                        "chain-intact verdict.",
+         "description": "The hash-chained history of every erase, forget, update "
+                        "and supersede, with a chain-intact verdict.",
          "inputSchema": {"type": "object", "properties": {}}},
         {"name": "mneme.status",
          "description": "Liveness and identity of the mneme MCP server (name, version, protocol). Network-free health probe.",
@@ -304,6 +304,7 @@ def handle_request(req: dict) -> dict | None:
 def serve(stdin=None, stdout=None) -> int:
     stdin = stdin if stdin is not None else sys.stdin
     stdout = stdout if stdout is not None else sys.stdout
+    snapshot_dir.startup_sweep()               # orphaned replay copies go at start
     for line in stdin:
         line = line.strip()
         if not line:

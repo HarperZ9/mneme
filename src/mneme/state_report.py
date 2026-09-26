@@ -2,16 +2,20 @@
 
 The default database is `mneme.db` in whatever directory a command runs, so an
 owner can collect memory databases across project folders without meaning to,
-some of them inside git work trees, where one `git add .` commits the memory.
+some of them inside git work trees, where, unless git ignores the file, one
+`git add .` stages the memory for the next commit.
 `mneme status` and `mneme doctor` report the resolved absolute path, whether
 it is the default location, the replay snapshot directory, the files and the
 row counts. They open the database read-only: they never create a missing
-database, migrate an old one or write to it.
+database, migrate an old one or write its rows (on a WAL database SQLite may
+create the -wal and -shm files, as any reader does). They also count what a
+forget before 0.5.0 left behind, and warn while an erase has not finished.
 
 `status` describes. `doctor` also re-derives the audit chain and exits 1 when
 anything needs the owner's attention. The MCP `mneme.doctor` tool reports the
 path facts only and never opens the database, because a lane host runs it as a
-readiness probe. Warnings name paths and counts, never memory text.
+readiness probe. Its result enters a model context, so the owner's home
+directory is written as `~`. Warnings name paths and counts, never memory text.
 """
 from __future__ import annotations
 
@@ -19,7 +23,8 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
-from . import __version__, audit_writer, schema_guard, snapshot_dir
+from . import __version__, audit_writer, erase_finish, schema_guard, snapshot_dir
+from .erase_index import cited
 from .schema import SCHEMA_VERSION
 
 REPORT_SCHEMA = "mneme.state/1"
@@ -98,7 +103,8 @@ def locate(state: str) -> dict:
         report["git_work_tree"] = str(tree)
         report["warnings"].append(
             f"the database is inside the git work tree at {tree}; unless git ignores "
-            "it, one `git add .` commits your memory. Move it out, or pass --state "
+            "it, one `git add .` stages your memory for the next commit. Move it out, "
+            "or pass --state "
             "(MNEME_STATE for the MCP server) with a path outside the work tree")
     return report
 
@@ -129,6 +135,27 @@ def _counts(conn: sqlite3.Connection, tables: set[str]) -> dict:
     return counts
 
 
+def _legacy(conn: sqlite3.Connection, tables: set[str]) -> dict:
+    """What a forget before 0.5.0 left: unsalted tombstones and turns nothing cites."""
+    facts = {"unsalted_forget_rows": 0, "uncited_turns": 0}
+    if "audit" in tables:
+        facts["unsalted_forget_rows"] = conn.execute(
+            "SELECT COUNT(*) FROM audit WHERE op='forget' AND before_sha NOT LIKE 'b1:%'"
+        ).fetchone()[0]
+    if {"turns", "memories"} <= tables:
+        used = {s for (raw,) in conn.execute("SELECT source_ids FROM memories")
+                for s in cited(raw)}
+        facts["uncited_turns"] = sum(1 for (turn_id,) in conn.execute("SELECT id FROM turns")
+                                     if turn_id not in used)
+    return facts
+
+
+LEGACY_NOTE = ("{forgets} forget entries from before 0.5.0 keep plain hashes, and such a "
+               "forget left its source turns in the store; {turns} turns are cited by no "
+               "memory. `mneme forget <turn id> --turn --dry-run` shows what erasing one "
+               "would remove")
+
+
 def _read_database(path: Path, verify: bool) -> dict:
     conn = _connect(path)
     try:
@@ -136,9 +163,12 @@ def _read_database(path: Path, verify: bool) -> dict:
             "SELECT name FROM sqlite_master WHERE type='table'")}
         facts = {"counts": _counts(conn, tables), "store_id": None,
                  "schema": {"stored": None, "high_water": None, "downgrade_seen": None}}
+        facts["legacy"] = _legacy(conn, tables)
+        facts["erase_pending"] = False
         if "meta" in tables:
             facts["store_id"] = snapshot_dir.store_id_of(conn)
             facts["schema"] = schema_guard.read(conn)
+            facts["erase_pending"] = erase_finish.is_pending(conn)
         if verify:
             chain = audit_writer.verify(conn) if "audit" in tables else True
             facts["audit"] = {"entries": facts["counts"]["audit"], "chain_intact": chain}
@@ -159,6 +189,12 @@ def _database_section(report: dict, path: Path, verify: bool) -> None:
     report["schema_version"] = {**schema, "running": running}
     report["warnings"].extend(schema_guard.findings(
         schema["stored"], schema["high_water"], running, schema["downgrade_seen"]))
+    if facts["erase_pending"]:
+        report["warnings"].append(erase_finish.PENDING_WARNING)
+    if facts["legacy"]["unsalted_forget_rows"]:
+        report["notes"].append(LEGACY_NOTE.format(
+            forgets=facts["legacy"]["unsalted_forget_rows"],
+            turns=facts["legacy"]["uncited_turns"]))
     if verify and not facts["audit"]["chain_intact"]:
         report["warnings"].append(
             "the audit chain does not re-derive: an entry was edited, reordered or "
@@ -175,8 +211,8 @@ def _snapshot_section(report: dict, path: Path) -> None:
     if counts["orphaned"]:
         report["warnings"].append(
             f"{counts['orphaned']} replay snapshot(s) of this store in {directory} were "
-            "left by a process that is gone; the next replay snapshot removes them, "
-            "and so does `mneme forget`")
+            "left by a process that is gone; opening the store for writing, the next "
+            "replay snapshot, `mneme forget` and `mneme scrub` remove them")
     if warning:
         report["warnings"].append(warning)
 
@@ -192,16 +228,27 @@ def describe(state: str, *, check: str = "status") -> dict:
     return report
 
 
+def _tilde(value):
+    """Write the home directory as `~` in a string or a list of strings."""
+    if isinstance(value, list):
+        return [_tilde(v) for v in value]
+    if not isinstance(value, str):
+        return value
+    home = str(Path.home())
+    return value.replace(home, "~") if home and home != "/" else value
+
+
 def mcp_doctor(env_state: str | None) -> dict:
-    """Path facts for the MCP doctor. It never opens the database."""
+    """Path facts for the MCP doctor, home written as `~`. Never opens the database."""
     state = DEFAULT_STATE if env_state is None else env_state
     facts = locate(state)
     _count, warning = _legacy_temp_warning()
     if warning:
         facts["warnings"].append(warning)
-    return {"state_path": state, "state_path_absolute": facts["state_path"],
-            "state_from_env": env_state is not None,
-            **{k: facts[k] for k in ("kind", "default_location", "exists",
-                                     "git_work_tree", "snapshot_dir", "warnings",
-                                     "notes")}}
+    report = {"state_path": state, "state_path_absolute": facts["state_path"],
+              "state_from_env": env_state is not None,
+              **{k: facts[k] for k in ("kind", "default_location", "exists",
+                                       "git_work_tree", "snapshot_dir", "warnings",
+                                       "notes")}}
+    return {k: _tilde(v) for k, v in report.items()}
 

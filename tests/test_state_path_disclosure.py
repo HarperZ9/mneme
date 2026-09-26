@@ -43,6 +43,11 @@ def _git_repo(root):
     return root
 
 
+def _home_as_tilde(path: str) -> str:
+    """The MCP doctor writes the home directory as `~` (its result reaches a model)."""
+    return path.replace(str(Path.home()), "~")
+
+
 def _mcp_doctor() -> dict:
     response = handle_request({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                                "params": {"name": "mneme.doctor", "arguments": {}}})
@@ -169,9 +174,9 @@ def test_mcp_doctor_discloses_the_resolved_path_and_the_snapshot_directory(
     body = _mcp_doctor()
 
     assert body["ok"] is True and body["state_from_env"] is True
-    assert body["state_path"] == str(db)
-    assert body["state_path_absolute"] == str(db.resolve())
-    assert body["snapshot_dir"] == str(snapshot_root)
+    assert body["state_path"] == _home_as_tilde(str(db))
+    assert body["state_path_absolute"] == _home_as_tilde(str(db.resolve()))
+    assert body["snapshot_dir"] == _home_as_tilde(str(snapshot_root))
     assert body["exists"] is True and body["warnings"] == []
     assert "mneme.forget" in body["tools"]
 
@@ -199,6 +204,23 @@ def test_mcp_doctor_names_the_default_location_and_a_missing_database(
     body = _mcp_doctor()
 
     assert body["state_from_env"] is False and body["default_location"] is True
-    assert body["state_path_absolute"] == str((tmp_path / "mneme.db").resolve())
+    assert body["state_path_absolute"] == _home_as_tilde(
+        str((tmp_path / "mneme.db").resolve()))
     assert any("creates it here" in w for w in body["warnings"])
     assert not (tmp_path / "mneme.db").exists()
+
+
+def test_status_on_a_wal_database_leaves_its_rows_and_main_file_unchanged(tmp_path, capsys):
+    db = tmp_path / "wal.db"
+    memory = AgentMemory(db)
+    memory.store.conn.execute("PRAGMA journal_mode=WAL")
+    memory.remember("s", [{"id": "t1", "role": "user", "text": "I live in Denver."}])
+    memory.close()
+    before = hashlib.sha256(db.read_bytes()).hexdigest()
+
+    _run(capsys, "--state", str(db), "status")
+    _run(capsys, "--state", str(db), "doctor")
+
+    # a WAL reader may create the -wal and -shm files, as the README says
+    assert hashlib.sha256(db.read_bytes()).hexdigest() == before
+    assert {p.name for p in tmp_path.iterdir()} <= {"wal.db", "wal.db-wal", "wal.db-shm"}
