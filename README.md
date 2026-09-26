@@ -248,17 +248,36 @@ source certification.
 
 ## Accountable forgetting
 
-Mneme deletes facts with an audit trail: `forget` and `update` leave a
-hash-chained tombstone, what was forgotten, its hash, and why, so the deletion
-record remains reviewable for GDPR-style "right to be forgotten" workflows.
+From 0.5.0 (unreleased; install from source), `forget` erases a memory, the
+turns it came from, and everything derived from them: memories that cite an
+erased turn or memory, scenario and persona rows, and the fact's supersession
+history. Other memories taken from the same turn are collateral. The CLI shows
+them and asks, and the library refuses them unless you pass
+`allow_collateral=True`.
 
 ```bash
-mneme forget <memory_id> --reason "user requested deletion"
-mneme audit          # -> {"entries":1,"chain_intact":true,"log":[{"op":"forget", …}]}
+mneme forget <memory_id> --dry-run               # the plan: every row it would erase
+mneme forget <memory_id> --reason "user asked"   # shows the plan, then asks
+mneme forget <session> --session --yes           # a whole session
+mneme audit          # -> {"entries":…,"chain_intact":true,"log":[{"op":"erase", …}]}
 ```
+
+Each erased row leaves one entry in the hash-chained audit log. The entry names
+a random erase ref and stores a salted commitment to the erased text. The salt
+is never stored, so the entry cannot confirm a guess of what was erased. The
+rows go in one transaction with `secure_delete` on. Mneme then vacuums the
+file, removes this store's replay snapshots, and scans the database files for
+the erased bytes. The receipt states that result next to what the erase cannot
+remove: audit rows written earlier still name the erased rows by
+content-derived id, the disk blocks SQLite released can hold old bytes until
+they are reused, and exports, backups and other copies of the database file
+are out of its reach.
 
 `update` edits a memory's text while keeping its provenance and recording the
 before/after hash. Tamper a tombstone and the chain breaks.
+
+In 0.4.2 and earlier, `forget` deleted the memory row only and left the raw
+turn in the store.
 
 ## Agents plug in over MCP
 
@@ -267,6 +286,13 @@ mneme mcp          # JSON-RPC 2.0 over stdio; MNEME_STATE points at the DB
 ```
 
 The released `v0.4.2` wheel exposes the MCP memory, recall, drift, provenance, origin recheck, forget, audit, status, doctor, Crucible export, and Crucible replay tools.
+
+From 0.5.0, `mneme.forget` takes two steps. A call with only `memory_id` returns
+the plan (ids and counts, with text previews only when `include_previews` is
+set) and deletes nothing. A second call with `confirm_plan_sha256` applies
+exactly that plan and returns the receipt, without the commitment openings. The
+model that asked for the plan can send the digest too, so a host that launches
+mneme for an agent should require an owner-granted step for this tool.
 
 MCP tools `mneme.to_crucible` and `mneme.replay_crucible` reuse the same replay library boundaries as the CLI. A recall
 through MCP returns the same re-derivable receipt, so the agent (or its operator)

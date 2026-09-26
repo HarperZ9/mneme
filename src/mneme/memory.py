@@ -191,10 +191,15 @@ class AgentMemory:
         return entity_graph(self, user=user, session=session)
 
     # -- accountable editing -------------------------------------------------
-    def forget(self, memory_id: str, reason: str = "") -> dict | None:
-        """Delete a memory, leaving a tombstone in the hash-chained audit log:
-        forgetting is auditable, not silent. None if the memory is absent."""
-        return self.store.forget(memory_id, reason)
+    def forget(self, memory_id: str, reason: str = "", *, include_sources: bool = True,
+               allow_collateral: bool = False) -> dict | None:
+        """Erase a memory, its source turns and everything derived from them, and
+        return the erase receipt (see erase.py). Raises CollateralError with the
+        plan when other memories share a source turn, unless allow_collateral.
+        include_sources=False keeps the source turns. None if the memory is absent."""
+        from .erase import forget_memory
+        return forget_memory(self.store, memory_id, reason, include_sources=include_sources,
+                             allow_collateral=allow_collateral)
 
     def update(self, memory_id: str, new_text: str, reason: str = "") -> dict | None:
         """Edit a memory's text, keeping its provenance and recording the

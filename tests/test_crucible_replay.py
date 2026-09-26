@@ -7,7 +7,6 @@ import json
 import os
 import sqlite3
 import sys
-import tempfile
 import threading
 from copy import deepcopy
 from pathlib import Path
@@ -55,6 +54,14 @@ def _replay_binding(rows: list[dict], *, skipped_count: int = 0) -> dict:
         "skipped_count": skipped_count,
         "sha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
     }
+
+
+def _store_id(path: Path) -> str:
+    conn = sqlite3.connect(path)
+    try:
+        return conn.execute("SELECT value FROM meta WHERE key='store_id'").fetchone()[0]
+    finally:
+        conn.close()
 
 
 def _state(path: Path) -> AgentMemory:
@@ -834,18 +841,15 @@ def test_cli_still_refuses_win32_sidecar_aliases_that_use_dot_components(
 
 
 def test_private_snapshot_leaves_no_temp_file_when_staging_fails(
-        tmp_path, monkeypatch):
-    """The temp file is owned from the moment it exists, not from the try block.
+        tmp_path, monkeypatch, snapshot_root):
+    """The snapshot file is owned from the moment it exists, not from the try block.
 
     mkstemp() creates the file; if anything between creation and the guarded
-    body raises, that file is orphaned in the system temp directory.
+    body raises, that file is orphaned in the per-user snapshot directory.
     """
     state_path = tmp_path / "mneme.db"
     memory = _state(state_path)
     memory.close()
-    snapshot_dir = tmp_path / "tmp"
-    snapshot_dir.mkdir()
-    monkeypatch.setattr(tempfile, "tempdir", str(snapshot_dir))
 
     real_close = os.close
     failed = False
@@ -864,10 +868,11 @@ def test_private_snapshot_leaves_no_temp_file_when_staging_fails(
         AgentMemory(state_path, read_only=True, immutable_snapshot=True)
 
     monkeypatch.setattr(os, "close", real_close)
-    assert list(snapshot_dir.glob("mneme-replay-*")) == []
+    assert [p.name for p in snapshot_root.iterdir()] == [_store_id(state_path)]
+    assert list(snapshot_root.rglob("mneme-replay-*")) == []
 
 
-def test_full_replay_leaves_no_private_snapshot_behind(tmp_path, capsys, monkeypatch):
+def test_full_replay_leaves_no_private_snapshot_behind(tmp_path, capsys, snapshot_root):
     """A successful replay must own and remove every file it created."""
     state_path = tmp_path / "mneme.db"
     memory = _state(state_path)
@@ -875,15 +880,14 @@ def test_full_replay_leaves_no_private_snapshot_behind(tmp_path, capsys, monkeyp
     template_path = tmp_path / "template.json"
     template_path.write_text(json.dumps(template), encoding="utf-8")
     memory.close()
-    snapshot_dir = tmp_path / "tmp"
-    snapshot_dir.mkdir()
-    monkeypatch.setattr(tempfile, "tempdir", str(snapshot_dir))
 
     rc = main(["--state", str(state_path), "replay-crucible", str(template_path),
                "--out", str(tmp_path / "pack.json")])
 
     assert rc == 0, capsys.readouterr().err
-    assert list(snapshot_dir.glob("mneme-replay-*")) == []
+    assert (snapshot_root / _store_id(state_path)).is_dir()     # it was made there
+    assert list(snapshot_root.rglob("mneme-replay-*")) == []
+    assert list(tmp_path.glob("mneme-replay-*")) == []
 
 
 def test_cli_reserves_casefolded_sidecar_spelling_portably(tmp_path, capsys):
@@ -1042,13 +1046,10 @@ def test_abandoned_immutable_reader_cleans_its_private_snapshot(tmp_path):
 
 
 def test_agent_memory_initialization_failure_cleans_private_snapshot(
-        tmp_path, monkeypatch):
-    import mneme.store as store_module
-
+        tmp_path, snapshot_root):
     state_path = tmp_path / "mneme.db"
     writer = _state(state_path)
     writer.close()
-    monkeypatch.setattr(store_module.tempfile, "tempdir", str(tmp_path))
 
     with pytest.raises(ValueError):
         AgentMemory(
@@ -1058,11 +1059,12 @@ def test_agent_memory_initialization_failure_cleans_private_snapshot(
             embed="invalid",
         )
 
-    assert list(tmp_path.glob("mneme-replay-*.db*")) == []
+    # the embedder is resolved before the store opens, so no snapshot is made
+    assert not snapshot_root.exists()
 
 
 def test_private_snapshot_deadline_includes_source_fingerprinting(
-        tmp_path, monkeypatch):
+        tmp_path, monkeypatch, snapshot_root):
     import mneme.store as store_module
 
     state_path = tmp_path / "mneme.db"
@@ -1074,7 +1076,6 @@ def test_private_snapshot_deadline_includes_source_fingerprinting(
         "monotonic",
         lambda: next(ticks, 11.0),
     )
-    monkeypatch.setattr(store_module.tempfile, "tempdir", str(tmp_path))
 
     with pytest.raises(sqlite3.DatabaseError, match="timed out"):
         AgentMemory(
@@ -1083,11 +1084,11 @@ def test_private_snapshot_deadline_includes_source_fingerprinting(
             immutable_snapshot=True,
         )
 
-    assert list(tmp_path.glob("mneme-replay-*.db*")) == []
+    assert list(snapshot_root.rglob("mneme-replay-*.db*")) == []
 
 
 def test_source_change_during_private_snapshot_handoff_fails_and_cleans(
-        tmp_path, monkeypatch, capsys):
+        tmp_path, monkeypatch, capsys, snapshot_root):
     import mneme.store as store_module
 
     state_path = tmp_path / "mneme.db"
@@ -1115,7 +1116,6 @@ def test_source_change_during_private_snapshot_handoff_fails_and_cleans(
         return fingerprint
 
     monkeypatch.setattr(store_module, "_snapshot_fingerprint", fingerprint_then_change)
-    monkeypatch.setattr(store_module.tempfile, "tempdir", str(tmp_path))
 
     rc = main(["--state", str(state_path), "replay-crucible", str(template_path),
                "--out", str(output_path)])
@@ -1124,13 +1124,12 @@ def test_source_change_during_private_snapshot_handoff_fails_and_cleans(
     assert rc != 0
     assert "source changed while its private snapshot was created" in captured.err
     assert not output_path.exists()
-    assert list(tmp_path.glob("mneme-replay-*.db*")) == []
+    assert (snapshot_root / _store_id(state_path)).is_dir()     # it was made there
+    assert list(snapshot_root.rglob("mneme-replay-*.db*")) == []
 
 
 def test_cleanup_failure_warns_without_retracting_published_pack(
-        tmp_path, monkeypatch, capsys):
-    import mneme.store as store_module
-
+        tmp_path, monkeypatch, capsys, snapshot_root):
     state_path = tmp_path / "mneme.db"
     memory = _state(state_path)
     template = _template(memory)
@@ -1138,7 +1137,6 @@ def test_cleanup_failure_warns_without_retracting_published_pack(
     template_path = tmp_path / "template.json"
     template_path.write_text(json.dumps(template), encoding="utf-8")
     output_path = tmp_path / "pack.json"
-    monkeypatch.setattr(store_module.tempfile, "tempdir", str(tmp_path))
     original_unlink = Path.unlink
 
     def fail_private_unlink(path, *args, **kwargs):
@@ -1155,7 +1153,7 @@ def test_cleanup_failure_warns_without_retracting_published_pack(
     assert rc == 0
     assert output_path.is_file()
     assert "warning: private replay cleanup incomplete" in captured.err
-    leaked = list(tmp_path.glob("mneme-replay-*.db*"))
+    leaked = list(snapshot_root.rglob("mneme-replay-*.db*"))
     assert leaked
     monkeypatch.setattr(Path, "unlink", original_unlink)
     for path in leaked:

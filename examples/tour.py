@@ -4,8 +4,9 @@
 
 Walks the whole loop on one conversation and asserts the accountability
 properties inline, so the tour doubles as a smoke test: ingest with provenance,
-recall with a re-derivable receipt, drift when a source changes, forget with an
-auditable tombstone, and prove a recalled memory traces back to its web source.
+recall with a re-derivable receipt, drift when a source changes, forget that
+erases the raw turn and everything derived from it with auditable tombstones,
+and prove a recalled memory traces back to its web source.
 Everything is local, deterministic, and zero-dependency.
 """
 from __future__ import annotations
@@ -59,13 +60,15 @@ def main() -> int:
     print(f"  after a source changed: {mem.drift()['overall']} "
           "(stale memory says so, it is not silently served)")
 
-    section("4. forget — deletion you can audit")
+    section("4. forget: erasure you can audit")
     mid = mem.store.memories(layer="L1")[-1]["id"]
-    mem.forget(mid, reason="user requested deletion")
+    receipt = mem.forget(mid, reason="user requested deletion")
     audit = mem.audit()
-    print(f"  forgot 1 memory; audit log has {audit['entries']} tombstone, "
-          f"chain intact: {audit['chain_intact']}")
-    assert audit["chain_intact"]
+    erased = sum(receipt["counts"]["memories"].values())
+    print(f"  erased {erased} memory row and {receipt['counts']['turns']} source turn; "
+          f"{audit['entries']} tombstones, chain intact: {audit['chain_intact']}")
+    assert audit["chain_intact"] and receipt["status"] == "erased"
+    assert mem.store.memory(mid) is None
 
     section("5. ecosystem — a memory that traces to its web source")
     mem2 = AgentMemory(":memory:")

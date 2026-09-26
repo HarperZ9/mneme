@@ -9,6 +9,13 @@ from __future__ import annotations
 
 SCHEMA_VERSION = "4"
 
+# meta keys. store_id is a random id that names this store's replay snapshot
+# directory; the high-water mark only moves up, so a newer mneme can tell that
+# an older one reopened the database and stamped its own, lower version.
+META_STORE_ID = "store_id"
+META_SCHEMA_HIGH_WATER = "schema_high_water"
+META_SCHEMA_DOWNGRADE_SEEN = "schema_downgrade_seen"
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS turns (
     id TEXT PRIMARY KEY, session TEXT NOT NULL, role TEXT NOT NULL,

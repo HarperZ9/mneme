@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.5.0 (unreleased)
+
+BREAKING. `forget` becomes a true forget, the MCP forget tool takes two steps,
+and replay snapshots move to a per-user state directory. Not published.
+
+- `forget` erases the memory, its source turns and every derived form:
+  memories that cite an erased turn or memory, scenario and persona rows, and
+  the fact's supersession history in both directions. `include_sources=False`
+  (CLI `--keep-sources`) keeps the source turns. Memories that only share a
+  source turn with the target are collateral: the library raises
+  `CollateralError` with the plan unless `allow_collateral=True`, and the CLI
+  asks, or refuses `--yes` without `--allow-collateral`. The CLI also erases
+  by `--turn` or `--session`.
+- One transaction deletes the rows and appends one `erase` audit entry per
+  row, with `secure_delete` on. An entry names a random erase ref, never the
+  content-derived id, and stores a salted commitment to the erased text whose
+  salt is never stored; `mneme forget --emit-opening` prints the salts once. A
+  reason that repeats erased text is refused, because reasons are stored
+  verbatim.
+- After the commit, a WAL store is checkpointed, the file is vacuumed with
+  `temp_store=MEMORY`, this store's replay snapshots are removed, and the
+  database files are scanned for erased bytes. The receipt reports the scan
+  and, beside it, the residue the erase cannot remove (earlier audit rows that
+  name erased rows by content-derived id, freed disk blocks, texts under 16
+  bytes) and the copies out of its reach (exports, backups, other copies of the
+  file, replay snapshots older versions left in the OS temp directory).
+  `mneme scrub` finishes a scrub that another open connection blocked.
+- `AgentMemory.forget` returns the erase receipt instead of one audit entry.
+  `Store.forget` stays the row-level primitive consolidation uses.
+- MCP `mneme.forget` returns the plan and deletes nothing unless the call
+  carries `confirm_plan_sha256`. It returns ids and counts, text previews only
+  with `include_previews`, and never an opening.
+- Replay snapshots live in `<LocalAppData>/mneme/snapshots` on Windows and in
+  `$XDG_STATE_HOME/mneme/snapshots` (or `~/.local/state/mneme/snapshots`)
+  elsewhere, under the store's random `store_id`, never beside the database. A
+  sweep removes snapshots whose process is gone.
+- `meta.schema_high_water` records the highest schema that wrote a database.
+  A lower `schema_version` on open means an older mneme reopened it: mneme
+  warns, keeps the finding in `meta.schema_downgrade_seen`, and migrates
+  again. Do not share one database file across mneme versions.
+- The row-level `forget`, `update` and `supersede` now write their audit entry
+  in the same transaction as the row change, so a crash cannot leave an audit
+  record of a change that never happened.
+
 ## 0.4.2 (2026-09-22)
 
 Publish to PyPI as `flywheel-mneme`. The install command changes, so this is a

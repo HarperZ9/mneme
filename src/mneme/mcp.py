@@ -17,7 +17,7 @@ import os
 import sys
 from typing import Any
 
-from . import __version__
+from . import __version__, mcp_forget
 from .memory import AgentMemory
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
@@ -122,12 +122,7 @@ def _tool_defs() -> list[dict]:
                  "allowed_root": {"type": "string"},
                  "profile": {"type": "string",
                              "description": "default gather.docs.file-read/v1"}}}},
-        {"name": "mneme.forget",
-         "description": "Delete a memory, leaving an auditable tombstone (what "
-                        "was forgotten, its hash, why).",
-         "inputSchema": {"type": "object", "required": ["memory_id"],
-             "properties": {"memory_id": {"type": "string"},
-                            "reason": {"type": "string"}}}},
+        mcp_forget.TOOL,                        # two-step plan, then confirm
         {"name": "mneme.audit",
          "description": "The hash-chained history of every forget/update, with a "
                         "chain-intact verdict.",
@@ -275,10 +270,7 @@ def call_tool(name: str, args: dict) -> str:
             raise ValueError(f"no memory with id {args['memory_id']!r}")
         return json.dumps(prov, indent=2, ensure_ascii=False)
     if name == "mneme.forget":
-        entry = mem.forget(str(args["memory_id"]), reason=str(args.get("reason", "")))
-        if entry is None:
-            raise ValueError(f"no memory with id {args['memory_id']!r}")
-        return json.dumps(entry, indent=2, ensure_ascii=False)
+        return mcp_forget.call(mem, args)
     if name == "mneme.audit":
         return json.dumps(mem.audit(), indent=2, ensure_ascii=False)
     raise ValueError(f"unknown tool: {name}")

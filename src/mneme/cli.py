@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 
 from . import __version__
+from .cli_forget import add_parsers as add_forget_parsers
 from .memory import AgentMemory
 from .store import SQLITE_SIDECAR_SUFFIXES, quiescent_snapshot_path
 
@@ -249,10 +250,7 @@ def build_parser() -> argparse.ArgumentParser:
     sc.add_argument("--user", default="", help="scope the scenarios to one user (multi-tenant)")
     sc.set_defaults(func=cmd_scenarios)
 
-    fg = sub.add_parser("forget", help="delete a memory, leaving an auditable tombstone")
-    fg.add_argument("memory_id")
-    fg.add_argument("--reason", default="")
-    fg.set_defaults(func=cmd_forget)
+    add_forget_parsers(sub)                     # forget and scrub: cli_forget.py
 
     up = sub.add_parser("update", help="edit a memory's text, recording before/after in the audit log")
     up.add_argument("memory_id")
@@ -339,15 +337,6 @@ def build_parser() -> argparse.ArgumentParser:
     mcp = sub.add_parser("mcp", help="serve mneme over MCP stdio (agent memory tools)")
     mcp.set_defaults(func=cmd_mcp)
     return p
-
-
-def cmd_forget(args) -> int:
-    entry = AgentMemory(args.state).forget(args.memory_id, reason=args.reason)
-    if entry is None:
-        print(f"no memory with id {args.memory_id!r}", file=sys.stderr)
-        return 2
-    print(json.dumps(entry, indent=2))
-    return 0
 
 
 def cmd_update(args) -> int:
