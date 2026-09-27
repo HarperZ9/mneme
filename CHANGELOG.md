@@ -1,10 +1,82 @@
 # Changelog
 
+## 0.5.1 (2026-09-26)
+
+Fixes to the 0.5.0 forget. The items marked Security or Privacy close gaps in
+0.5.0 where an erase kept the erased text, or a way to confirm it, while the
+receipt said `erased`, or touched another user's rows. Upgrade if you erase
+data with 0.5.0. The schema stays at 5 and needs no migration. The receipt
+drops `plan_sha256` and gains finding codes, so a caller that reads either
+should check the README table.
+
+- Security: a reason that holds a key from the erased text is refused. The
+  reason is stored verbatim in the append-only audit log, and 0.5.0 checked it
+  only for a 16-character run, so `rotated FAKE-KEY-7Q2Z9` kept the key for
+  good while the receipt said `erased`. A reason is now refused when it holds
+  a word of the erased text of 8 or more characters (6 with a digit), or is
+  itself a piece of it of 8 to 15 characters. Every audit reason, this
+  erase's own included, is checked for a quote of the erased text or a word
+  of it that has a digit, and a hit is residue.
+- Security: an erase no longer takes another user's turn as a duplicate.
+  Turns have no user column, and 0.5.0 counted a turn that no memory cites as
+  every user's. Erasing one user's memory then planned another user's uncited
+  turn with the same text as a same-user duplicate, the plan still reported
+  one user, and consenting to the duplicates deleted it. A turn now belongs to
+  the users of the memories that cite it, or, when none does, of the memories
+  in its session. A turn in a session with no memories counts only when the
+  erase already touches that session. Another user's copy stays, and the
+  receipt reports it as residue.
+- Privacy: the receipt no longer says `erased` while a kept row holds the
+  erased text. 0.5.0 missed a short erased text (8 to 15 characters, such as
+  a key) inside a longer kept row, a kept row that quotes a 16-character run
+  of a longer erased text, and text copied into a table mneme does not own,
+  which it treated as kept. These now give `kept_rows_contain_short_text`,
+  `kept_rows_share_erased_run` and `scan_hits`, and the status
+  `erased_residue_found`. Only turns, memories and merge links count as kept.
+- Privacy: less leaves through output that can reach a model.
+  `--emit-opening` prints the salts only to a terminal. When stdout is a pipe
+  it refuses before it deletes anything; 0.5.0 printed them to the pipe, and
+  an opening lets whoever holds the audit log confirm a guess of the erased
+  text. The receipt drops `plan_sha256`: the digest binds the content hashes
+  of the erased rows, so a guessed text, with the session and turn id it came
+  in under, rebuilt the digest and confirmed the guess. A
+  plan printed to a pipe no longer names users. The CLI prints the paths of
+  legacy temp snapshots to stderr instead of into the receipt. On Windows the
+  MCP `mneme.doctor` writes the home directory as `~` in any letter case,
+  with either slash, and in its 8.3 short form; 0.5.0 matched one exact
+  spelling, so another spelling put the owner's user name into model context.
+- Privacy: snapshot handling and the unfinished-erase marker. A snapshot
+  directory that cannot be listed counts as a failed removal; 0.5.0 read it
+  as empty and said `erased` while a snapshot holding the text remained. The
+  `meta.erase_pending` marker stays until the scrub and the snapshot removal
+  have both finished, so `mneme status` and `mneme doctor` keep warning; 0.5.0
+  cleared it when a reader held the WAL or a snapshot could not be removed.
+  A refused erase (a stale plan, a refused reason) leaves the store's replay
+  snapshots alone; 0.5.0 removed them before it checked the plan, including
+  one a live reader was using. A snapshot name with a process id out of range
+  is `unknown` and never swept; 0.5.0 on Windows cut such an id down to a
+  running system process and counted the file as live. A malformed merge row
+  no longer stops every erase of the store.
+- `mneme scrub` says whether the erase it finishes ran its residual scan
+  (`residual_scan`: `ran_at_erase` or `not_run`). A marker 0.5.0 left reads
+  as `not_run`.
+- The receipt names the MCP client's own session history as a copy out of
+  reach, in an `erased_unverified` receipt too. It reports whether an older
+  mneme reopened the store (`schema_downgrade`), and its note on freed disk
+  blocks names the journal the store uses and no longer claims a VACUUM that
+  did not finish.
+- The README maps every finding code to its status, and a test pins the table
+  to the code. Checks that run only on POSIX are described as POSIX-only. The
+  MCP `include_previews` description names duplicate rows. The tour runs
+  in-process.
+- The release check refuses a top CHANGELOG entry that still calls itself
+  unpublished, and the 0.5.0 entry below drops such a line.
+
 ## 0.5.0 (2026-09-26)
 
 BREAKING. `forget` becomes a true forget, the MCP forget tool takes two steps,
 replay snapshots move to a per-user state directory, and schema 5 blinds the
-update and supersede history in the audit log. Not published.
+update and supersede history in the audit log.
 
 - `forget` erases the memory, its source turns and every derived form:
   memories that cite an erased turn or memory, scenario and persona rows, and

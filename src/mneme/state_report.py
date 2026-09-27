@@ -15,16 +15,21 @@ forget before 0.5.0 left behind, and warn while an erase has not finished.
 anything needs the owner's attention. The MCP `mneme.doctor` tool reports the
 path facts only and never opens the database, because a lane host runs it as a
 readiness probe. Its result enters a model context, so the owner's home
-directory is written as `~`. Warnings name paths and counts, never memory text.
+directory is written as `~`, matched on Windows in any letter case, with
+either slash, and in its 8.3 short form. Warnings name paths and counts, never
+memory text.
 """
 from __future__ import annotations
 
+import os
+import re
 import sqlite3
 import tempfile
 from pathlib import Path
 
 from . import __version__, audit_writer, erase_finish, schema_guard, snapshot_dir
 from .erase_index import cited
+from .os_facts import short_path
 from .schema import SCHEMA_VERSION
 
 REPORT_SCHEMA = "mneme.state/1"
@@ -110,7 +115,11 @@ def locate(state: str) -> dict:
 
 
 def _legacy_temp_warning() -> tuple[int, str | None]:
-    count = len(snapshot_dir.legacy_temp_snapshots())
+    try:
+        count = len(snapshot_dir.legacy_temp_snapshots())
+    except OSError as exc:
+        return 0, (f"cannot list {tempfile.gettempdir()} for replay snapshots older "
+                   f"mneme left there: {exc.__class__.__name__}")
     if not count:
         return 0, None
     return count, (f"{count} replay snapshot file(s) from mneme before 0.5.0 are in "
@@ -204,7 +213,12 @@ def _database_section(report: dict, path: Path, verify: bool) -> None:
 def _snapshot_section(report: dict, path: Path) -> None:
     store_id = report.get("store_id")
     directory = snapshot_dir.store_dir(store_id, path)
-    counts = snapshot_dir.store_snapshot_counts(store_id, path)
+    try:
+        counts = snapshot_dir.store_snapshot_counts(store_id, path)
+    except OSError as exc:
+        counts = {"live": 0, "orphaned": 0, "unknown": 0, "unlisted": 1}
+        report["warnings"].append(f"cannot list the replay snapshots in {directory}: "
+                                  f"{exc.__class__.__name__}")
     legacy, warning = _legacy_temp_warning()
     report["store_snapshot_dir"] = str(directory) if directory else None
     report["snapshots"] = {**counts, "legacy_temp": legacy}
@@ -228,14 +242,31 @@ def describe(state: str, *, check: str = "status") -> dict:
     return report
 
 
-def _tilde(value):
+def _home_pattern() -> re.Pattern | None:
+    """The home directory as a pattern: on Windows any letter case, either
+    slash, and the 8.3 short form too."""
+    home = str(Path.home())
+    if not home or home == os.sep or home == "/":
+        return None
+    forms = {home}
+    if os.name == "nt":
+        forms.add(short_path(home) or home)
+    parts = [r"[\\/]".join(re.escape(p) for p in re.split(r"[\\/]", f))
+             for f in sorted(forms, key=len, reverse=True)]
+    flags = re.IGNORECASE if os.name == "nt" else 0
+    return re.compile("|".join(parts), flags)
+
+
+def _tilde(value, pattern=None):
     """Write the home directory as `~` in a string or a list of strings."""
+    pattern = pattern if pattern is not None else _home_pattern()
+    if pattern is None:
+        return value
     if isinstance(value, list):
-        return [_tilde(v) for v in value]
+        return [_tilde(v, pattern) for v in value]
     if not isinstance(value, str):
         return value
-    home = str(Path.home())
-    return value.replace(home, "~") if home and home != "/" else value
+    return pattern.sub("~", value)
 
 
 def mcp_doctor(env_state: str | None) -> dict:

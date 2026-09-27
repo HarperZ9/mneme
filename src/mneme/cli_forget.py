@@ -1,14 +1,18 @@
 """cli_forget.py: `mneme forget` and `mneme scrub`.
 
 `forget` prints the plan first. Row text (collateral, lineage and duplicate
-previews) is shown only when stdout is a terminal or --show-text is given,
-because a plan printed to a pipe can land in an agent's model context and
-reach its provider. `--dry-run` plans through a read-only connection and
-changes nothing, not even an older database's schema stamp. Without --yes the
-command asks; with --yes it still refuses collateral and duplicates until
---allow-collateral says the caller saw them. `--emit-opening` prints the salt
-of each erase commitment once; the salts are never stored, so run it
-yourself rather than through an agent.
+previews) and tenant names are shown only when stdout is a terminal or
+--show-text is given, because a plan printed to a pipe can land in an agent's
+model context and reach its provider. `--dry-run` plans through a read-only
+connection and changes nothing, not even an older database's schema stamp.
+Without --yes the command asks; with --yes it still refuses collateral and
+duplicates until --allow-collateral says the caller saw them.
+`--emit-opening` prints the salt of each erase commitment once. The salts are
+never stored, and an opening lets anyone holding the audit log confirm a
+guess of the erased text, so the flag works only when stdout is a terminal:
+on a pipe the command refuses before it deletes anything. The paths of
+replay snapshots older mneme left in the temp directory go to stderr, never
+into the receipt.
 
 `scrub` finishes an erase that stopped after its commit (erase_finish.py).
 
@@ -43,8 +47,17 @@ def _interactive() -> bool:
     return sys.stdin.isatty()
 
 
+def _stdout_is_terminal() -> bool:
+    return sys.stdout.isatty()
+
+
 def _shows_text(args) -> bool:
-    return bool(args.show_text) or sys.stdout.isatty()
+    return bool(args.show_text) or _stdout_is_terminal()
+
+
+def _shown(plan: dict, args) -> dict:
+    """The plan as printed: tenant names only where row text may be shown."""
+    return plan if _shows_text(args) else {k: v for k, v in plan.items() if k != "users"}
 
 
 def _ask(prompt: str) -> str:
@@ -80,7 +93,8 @@ def add_parsers(sub) -> None:
     fg.add_argument("--plan-sha256", default=None,
                     help="apply only if the plan still has this digest")
     fg.add_argument("--emit-opening", action="store_true",
-                    help="print each erase commitment's salt once; it is never stored")
+                    help="print each erase commitment's salt once, to a terminal only; "
+                         "it is never stored")
     fg.set_defaults(func=cmd_forget, kind="memory")
     sc = sub.add_parser("scrub", help="finish an erase: remove the store's replay snapshots, "
                                       "checkpoint and VACUUM, and report the files")
@@ -104,13 +118,13 @@ def _confirmed(plan: dict, args) -> bool:
     extra = counts["collateral"] + counts["duplicates"]
     if args.yes:
         if extra and not args.allow_collateral:
-            _print(plan)
+            _print(_shown(plan, args))
             print(f"forget refused: the plan also erases {counts['collateral']} collateral "
                   f"and {counts['duplicates']} duplicate rows; review them above, then "
                   "add --allow-collateral", file=sys.stderr)
             return False
         return True
-    _print(plan)
+    _print(_shown(plan, args))
     if not _interactive():
         print("confirmation required: re-run with --yes (plus --allow-collateral when "
               "the plan lists collateral or duplicates), or use --dry-run", file=sys.stderr)
@@ -133,11 +147,22 @@ def _apply(memory: AgentMemory, args, selection: Selection, plan: dict) -> int:
             RuntimeError, sqlite3.Error) as exc:
         print(f"forget refused: {exc}", file=sys.stderr)
         return 1
-    legacy = snapshot_dir.legacy_temp_snapshots()
-    if legacy:
-        receipt["legacy_temp_snapshot_paths"] = [str(p) for p in legacy]
     _print(receipt)
+    _print_legacy_paths()
     return 0 if receipt["status"] in CLEAN else 3
+
+
+def _print_legacy_paths() -> None:
+    """Name the legacy temp snapshots on stderr, where a pipe does not carry them."""
+    try:
+        legacy = snapshot_dir.legacy_temp_snapshots()
+    except OSError as exc:
+        print(f"cannot list the temp directory for old replay snapshots: {exc}",
+              file=sys.stderr)
+        return
+    for path in legacy:
+        print(f"replay snapshot from mneme before 0.5.0, check and delete it: {path}",
+              file=sys.stderr)
 
 
 def _missing(store, exc: Exception) -> int:
@@ -155,7 +180,7 @@ def _dry_run(args) -> int:
         return _missing(store, exc)
     finally:
         store.close()
-    _print(plan)
+    _print(_shown(plan, args))
     return 0
 
 
@@ -164,6 +189,11 @@ def cmd_forget(args) -> int:
         return 2
     if args.dry_run:
         return _dry_run(args)
+    if args.emit_opening and not _stdout_is_terminal():
+        print("forget refused: --emit-opening writes the salts only to a terminal, and "
+              "stdout is not one; run it yourself in a terminal, not through a pipe or "
+              "an agent", file=sys.stderr)
+        return 1
     memory = AgentMemory(args.state)
     try:
         selection = _selection(args)

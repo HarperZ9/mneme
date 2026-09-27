@@ -1,18 +1,22 @@
 """erase_outside.py: copies of the store that an erase cannot remove.
 
-Some copies can only be named: exports, backups and other copies of the
-file, and text that reached a model provider (an LLM extractor or embedder,
-or an MCP client that read recall, provenance or plan previews). Two kinds
-can also be scanned, and a hit keeps the receipt from saying `erased`:
+Some copies can only be named (`named_only`): exports, backups and other
+copies of the file, text that reached a model provider (an LLM extractor or
+embedder, or an MCP client that read recall, provenance or plan previews), and
+the MCP client's own session history, which keeps every result it read on
+the owner's machine. Two kinds can also be scanned, and a hit keeps the
+receipt from saying `erased`:
 
 - replay snapshots that mneme before 0.5.0 left in the OS temp directory,
   which cannot be tied to one store, so they are scanned and left in place;
 - snapshots of other stores under the snapshot root, which may be copies of
   this store made under another path or id.
 
-Both are foreign files, so they are opened without following links and
-without blocking, skipped when another user owns them, and not read past
-`MAX_COPY_BYTES`.
+Both are foreign files. A link is never listed as a snapshot, and no file
+is read past `MAX_COPY_BYTES`. On POSIX a file is also opened without
+following a link and without blocking, and skipped when another user owns
+it; Windows has neither the flags nor file owner ids in this form, so those
+two checks do not run there.
 """
 from __future__ import annotations
 
@@ -58,7 +62,8 @@ def _other_snapshots(store_id, db: Path | None, texts, kept) -> dict:
     return _scanned(item, paths, texts, kept)
 
 
-def out_of_reach(store_id, db: Path | None, texts, kept) -> list[dict]:
+def named_only() -> list[dict]:
+    """The copies an erase can name but neither scan nor remove."""
     return [
         {"class": "exports", "note": "files written earlier by `mneme inspect --out` "
                                      "or `mneme to-crucible`"},
@@ -68,9 +73,16 @@ def out_of_reach(store_id, db: Path | None, texts, kept) -> list[dict]:
          "note": "text sent earlier to a model provider: turns given to an LLM "
                  "extractor or embedder, and results an MCP client read (recall, "
                  "provenance, forget previews); the provider's terms govern them"},
-        _legacy_temp(texts, kept),
-        _other_snapshots(store_id, db, texts, kept),
+        {"class": "client_transcripts",
+         "note": "the MCP client's own session history on this machine, which keeps "
+                 "every result it read (recall, provenance, plan previews, audit, "
+                 "Crucible exports); delete it in that client"},
     ]
+
+
+def out_of_reach(store_id, db: Path | None, texts, kept) -> list[dict]:
+    return [*named_only(), _legacy_temp(texts, kept),
+            _other_snapshots(store_id, db, texts, kept)]
 
 
 def copies_found(items: list[dict]) -> tuple[int, int]:

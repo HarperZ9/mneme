@@ -5,6 +5,8 @@ links, and the merge links consolidation writes (`merges` table): when a
 near-duplicate is merged away, its row goes but its source turns stay, so
 the kept memory carries them as lineage. `duplicates` finds rows that repeat
 an erased text whole (erase_text.repeats_whole) and belong to the same users.
+A turn has no user column, so it belongs to the users of the memories that
+cite it, or, when none does, to the users of the memories in its session.
 """
 from __future__ import annotations
 
@@ -121,19 +123,40 @@ def existing(store, table: str, column: str, values) -> set[str]:
     return found
 
 
-def turn_rows(store) -> dict[str, tuple[str, str]]:
-    """Every turn as id -> (text, content_sha256)."""
-    return {r[0]: (r[1], r[2]) for r in store.conn.execute(
-        "SELECT id, text, content_sha256 FROM turns")}
+def turn_rows(store) -> dict[str, tuple[str, str, str]]:
+    """Every turn as id -> (text, content_sha256, session)."""
+    return {r[0]: (r[1], r[2], r[3]) for r in store.conn.execute(
+        "SELECT id, text, content_sha256, session FROM turns")}
+
+
+def _session_users(index: Index) -> dict[str, set[str]]:
+    found: dict[str, set[str]] = {}
+    for row in index.rows.values():
+        if row.session is not None:
+            found.setdefault(row.session, set()).add(row.user)
+    return found
+
+
+def _owned(index: Index, turn_id: str, session: str, by_session, users, sessions) -> bool:
+    """True when the turn belongs to `users`: through the memories citing it,
+    else the memories of its session, else a session the erase touches."""
+    owners = {index.rows[c].user for c in index.citers.get(turn_id, ())}
+    if owners:
+        return owners <= users
+    owners = by_session.get(session, set())
+    if owners:
+        return owners <= users
+    return session in sessions
 
 
 def duplicates(index: Index, turns: dict, texts, *, skip_turns: set[str],
-               skip_memories: set[str], users: set[str]) -> tuple[set[str], set[str]]:
+               skip_memories: set[str], users: set[str],
+               sessions: set[str]) -> tuple[set[str], set[str]]:
     """Turns and memories, outside the skip sets, that repeat one of `texts`.
 
-    A memory counts only when its user is one of `users`. A turn counts only
-    when every memory citing it belongs to one of `users`; no user column sits
-    on a turn, so a turn nothing cites counts for any user."""
+    A memory counts only when its user is one of `users`, a turn only when it
+    belongs to them (`_owned`). A turn in a session with no memories counts
+    only when its session is one of `sessions`, those the erase touches."""
     needles = {n for n in (norm(t) for t in texts) if n}
     if not needles:
         return set(), set()
@@ -144,9 +167,8 @@ def duplicates(index: Index, turns: dict, texts, *, skip_turns: set[str],
 
     found_memories = {m for m, row in index.rows.items()
                       if m not in skip_memories and row.user in users and hit(row.text)}
-    found_turns = set()
-    for turn_id, (text, _sha) in turns.items():
-        owners = {index.rows[c].user for c in index.citers.get(turn_id, ())}
-        if turn_id not in skip_turns and owners <= users and hit(text):
-            found_turns.add(turn_id)
+    by_session = _session_users(index)
+    found_turns = {turn_id for turn_id, (text, _sha, session) in turns.items()
+                   if turn_id not in skip_turns and hit(text)
+                   and _owned(index, turn_id, session, by_session, users, sessions)}
     return found_turns, found_memories

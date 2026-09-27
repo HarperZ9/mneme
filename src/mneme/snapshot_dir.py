@@ -12,9 +12,13 @@ Each writable store carries a random `store_id` in meta, and its snapshots go
 under `<root>/<store_id>/`, so an erase can find and remove every copy of the
 store it just changed. A source without a valid id (read-only, legacy, or a
 hostile value) maps to `<root>/unkeyed/<sha256 of its resolved path>/`. File
-names carry the creating process id. Snapshots whose process is gone are
-swept when a writable store opens, when the MCP server starts, when mneme
-creates a snapshot, and when an erase starts.
+names carry the creating process id; a name whose id is out of range is
+`unknown` and never swept. Snapshots whose process is gone are swept when a
+writable store opens, when the MCP server starts, when mneme creates a
+snapshot, and when an erase starts. A directory that cannot be listed raises
+OSError rather than reading as empty, so an erase counts a failed removal.
+A link is never listed as a snapshot, and a linked snapshot directory is
+refused.
 
 On POSIX an unlink succeeds while another process holds the file open, and
 that process can keep reading it. A snapshot removed while its creating
@@ -22,6 +26,7 @@ process still runs is therefore reported as a copy that may remain.
 """
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import os
 import re
@@ -40,7 +45,8 @@ from .schema import META_STORE_ID
 STORE_ID_PATTERN = r"st_[0-9a-f]{32}"
 SNAPSHOT_GLOB = "mneme-replay-*.db"
 SIDECARS = ("-journal", "-wal", "-shm")
-_NAME = re.compile(r"mneme-replay-(\d+)-[A-Za-z0-9_]+\.db")
+_NAME = re.compile(r"mneme-replay-(\d{1,10})-[A-Za-z0-9_]+\.db")
+MAX_PID = 2**31 - 1                  # a pid_t on POSIX; Windows ids stay far below
 UNLINK_KEEPS_OPEN_FILES = os.name != "nt"
 _LOG = logging.getLogger("mneme")
 
@@ -159,10 +165,15 @@ def _remove_with_sidecars(path: Path) -> bool:
 
 
 def _snapshot_files(directory: Path) -> list[Path]:
-    if not directory.is_dir():
+    """Regular files named like a snapshot. A missing directory is empty; one
+    that cannot be listed raises (Path.glob would read it as empty)."""
+    try:
+        entries = list(os.scandir(directory))
+    except (FileNotFoundError, NotADirectoryError):
         return []
-    return sorted(p for p in directory.glob(SNAPSHOT_GLOB)
-                  if p.is_file() and not p.is_symlink())
+    return sorted(Path(e.path) for e in entries
+                  if fnmatch.fnmatch(e.name, SNAPSHOT_GLOB)
+                  and e.is_file(follow_symlinks=False))
 
 
 def _store_dirs(root: Path) -> list[Path]:
@@ -175,12 +186,22 @@ def _store_dirs(root: Path) -> list[Path]:
     return dirs
 
 
-def _state_of(path: Path) -> str:
-    """'live' or 'orphaned' by the creating process id in the name, else 'unknown'."""
+def _pid_of(path: Path) -> int | None:
+    """The creating process id in a snapshot name, or None when absent or out of
+    range (a value the OS would truncate or refuse)."""
     match = _NAME.fullmatch(path.name)
     if match is None:
+        return None
+    pid = int(match.group(1))
+    return pid if 0 < pid <= MAX_PID else None
+
+
+def _state_of(path: Path) -> str:
+    """'live' or 'orphaned' by the creating process id in the name, else 'unknown'."""
+    pid = _pid_of(path)
+    if pid is None:
         return "unknown"
-    return "live" if _pid_alive(int(match.group(1))) else "orphaned"
+    return "live" if _pid_alive(pid) else "orphaned"
 
 
 def sweep_orphans(root: Path | None = None) -> dict:
@@ -202,8 +223,9 @@ def startup_sweep() -> dict | None:
     """Sweep orphans; a failure is logged, never raised, so opening a store works."""
     try:
         return sweep_orphans()
-    except OSError as exc:
-        _LOG.warning("mneme: could not sweep orphaned replay snapshots: %s", exc)
+    except Exception as exc:          # a hostile name or directory must not stop an open
+        _LOG.warning("mneme: could not sweep orphaned replay snapshots: %s: %s",
+                     exc.__class__.__name__, exc)
         return None
 
 
@@ -223,9 +245,9 @@ def store_snapshot_counts(store_id: str | None, source_path: Path | None) -> dic
 
 
 def _held_elsewhere(path: Path) -> bool:
-    match = _NAME.fullmatch(path.name)
-    return (UNLINK_KEEPS_OPEN_FILES and match is not None
-            and int(match.group(1)) != os.getpid() and _pid_alive(int(match.group(1))))
+    pid = _pid_of(path)
+    return (UNLINK_KEEPS_OPEN_FILES and pid is not None
+            and pid != os.getpid() and _pid_alive(pid))
 
 
 def remove_store_snapshots(store_id: str | None, source_path: Path | None) -> dict:

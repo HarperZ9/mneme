@@ -7,7 +7,8 @@ properties inline, so the tour doubles as a smoke test: ingest with provenance,
 recall with a re-derivable receipt, drift when a source changes, forget that
 erases the raw turn and everything derived from it with auditable tombstones,
 and prove a recalled memory traces back to its web source.
-Everything is local, deterministic, and zero-dependency.
+This tour runs on this machine with no model, so no text goes to a model
+provider; it is deterministic and zero-dependency.
 """
 from __future__ import annotations
 

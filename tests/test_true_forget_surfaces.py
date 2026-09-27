@@ -70,8 +70,10 @@ def test_cli_yes_refuses_collateral_without_allow_collateral(tmp_path, capsys):
     assert _turn_exists(db)
 
 
-def test_cli_openings_verify_the_commitments_and_are_never_stored(tmp_path, capsys):
+def test_cli_openings_verify_the_commitments_and_are_never_stored(tmp_path, capsys,
+                                                                 monkeypatch):
     db, ids = _db(tmp_path)
+    monkeypatch.setattr(cli_forget, "_stdout_is_terminal", lambda: True)
 
     rc = _forget(db, ids["Denver"], "--yes", "--allow-collateral", "--emit-opening",
                  "--reason", "user asked")
@@ -160,11 +162,11 @@ def test_cli_scrub_and_legacy_temp_snapshot_paths(tmp_path, capsys, monkeypatch)
     db, _ids = _db(tmp_path)
 
     assert _forget(db, "t1", "--turn", "--yes") == 0
-    receipt = json.loads(capsys.readouterr().out)
+    err = capsys.readouterr().err
     assert main(["--state", str(db), "scrub"]) == 0
     scrub = json.loads(capsys.readouterr().out)
 
-    assert receipt["legacy_temp_snapshot_paths"] == [str(legacy_dir / "mneme-replay-old.db")]
+    assert str(legacy_dir / "mneme-replay-old.db") in err
     assert scrub["vacuum"] == "done" and scrub["freelist_count"] == 0
 
 

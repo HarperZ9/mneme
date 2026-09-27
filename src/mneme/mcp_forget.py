@@ -41,8 +41,8 @@ TOOL = {
         "keep_sources": {"type": "boolean",
                          "description": "keep the source turns (default false)"},
         "include_previews": {"type": "boolean",
-                             "description": "show the text of collateral and lineage "
-                                            "rows in the plan (default false)"},
+                             "description": "show the text of collateral, lineage and "
+                                            "duplicate rows in the plan (default false)"},
         "confirm_plan_sha256": {"type": "string",
                                 "description": "the plan_sha256 of the plan to apply"},
         "allow_collateral": {"type": "boolean",
