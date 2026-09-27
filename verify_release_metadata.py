@@ -4,7 +4,8 @@ The default check permits an unreleased source candidate when package metadata,
 runtime version, and the top changelog entry agree. Publication mode is stricter:
 the tag, package metadata, runtime version, top changelog entry, and README
 release wheel reference must all name the same final version, and no paragraph
-of README.md or USAGE.md may still call that version unreleased.
+of README.md or USAGE.md may still call that version unreleased, and the top
+changelog entry may not still say it is not published.
 """
 from __future__ import annotations
 
@@ -147,8 +148,18 @@ def verify_metadata(root: Path, *, publication_tag: str | None = None) -> Releas
             )
         _verify_readme_final_release(metadata, version)
         _verify_docs_do_not_call_it_unreleased(root, version)
+        _verify_changelog_entry_is_published(root)
 
     return metadata
+
+
+def _verify_changelog_entry_is_published(root: Path) -> None:
+    """The top CHANGELOG entry's body may not still say it is not published."""
+    changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+    entries = re.split(r"^##\s+", changelog, flags=re.MULTILINE)
+    top = entries[1] if len(entries) > 1 else ""
+    if re.search(r"\bnot\s+(?:yet\s+)?published\b", top, re.IGNORECASE):
+        raise ReleaseMetadataError("CHANGELOG top entry still says it is not published")
 
 
 def _verify_docs_do_not_call_it_unreleased(root: Path, version: str) -> None:

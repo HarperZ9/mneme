@@ -113,3 +113,13 @@ def test_an_unreleased_note_about_another_version_does_not_block_publication(tmp
     (tmp_path / "USAGE.md").write_text("From 0.9.0 (unreleased), more.\n", encoding="utf-8")
 
     verify_metadata(tmp_path, publication_tag="v0.4.1")
+
+
+def test_publication_guard_rejects_a_changelog_entry_that_says_not_published(tmp_path):
+    _write_project(tmp_path)
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(changelog.read_text(encoding="utf-8").replace(
+        "- Release entry.", "BREAKING. Not published.\n\n- Release entry."), encoding="utf-8")
+
+    with pytest.raises(ReleaseMetadataError, match="CHANGELOG.*not published"):
+        verify_metadata(tmp_path, publication_tag="v0.4.1")

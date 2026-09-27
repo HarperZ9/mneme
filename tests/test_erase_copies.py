@@ -4,15 +4,13 @@ Known copies that still hold erased text keep the receipt from saying
 `erased`: replay snapshots older mneme left in the OS temp directory, and
 snapshots of other stores under the snapshot root. Orphaned snapshots are
 swept first. A foreign file in a shared temp directory is never read past a
-size cap, never through a link, and never when another user owns it. Every
-text is planted test data.
+size cap; on POSIX it is also never read through a link or when another user
+owns it (those tests skip on Windows). Every text is planted test data.
 """
 from __future__ import annotations
 
 import json
 import os
-import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
@@ -38,11 +36,6 @@ def _copy_bytes() -> bytes:
     return b"SQLite format 3\x00" + b"\x00" * 40 + SENTENCE.encode("utf-8") + b"\x00" * 40
 
 
-def _dead_pid() -> int:
-    child = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"],
-                           capture_output=True, text=True, check=True)
-    return int(child.stdout)
-
 
 def _out_of_reach(receipt, name):
     return next(item for item in receipt["out_of_reach"] if item["class"] == name)
@@ -60,8 +53,9 @@ def test_a_legacy_temp_snapshot_holding_the_text_means_copies_remain(tmp_path, c
     assert _out_of_reach(receipt, "legacy_temp_snapshots")["containing_erased_text"] == 1
 
 
-def test_an_orphan_is_swept_and_another_stores_snapshot_is_scanned(tmp_path, snapshot_root):
-    orphan = snapshot_root / "unkeyed" / ("c" * 64) / f"mneme-replay-{_dead_pid()}-x.db"
+def test_an_orphan_is_swept_and_another_stores_snapshot_is_scanned(tmp_path, snapshot_root,
+                                                                  dead_pid):
+    orphan = snapshot_root / "unkeyed" / ("c" * 64) / f"mneme-replay-{dead_pid}-x.db"
     live = snapshot_root / ("st_" + "1" * 32) / f"mneme-replay-{os.getpid()}-y.db"
     db, atom = _db(tmp_path)
     memory = AgentMemory(db)

@@ -3,7 +3,9 @@
 `known_local_appdata` reads the per-user LocalAppData folder on Windows
 through the Known Folder API rather than an environment variable, which any
 parent process can set. `pid_alive` tells whether a process id still runs,
-so a replay snapshot left by a process that is gone can be swept.
+so a replay snapshot left by a process that is gone can be swept. An id out
+of range answers True (keep the file), because the OS would refuse it or
+truncate it to another process's id.
 """
 from __future__ import annotations
 
@@ -34,7 +36,12 @@ def known_local_appdata() -> Path:
         ctypes.windll.ole32.CoTaskMemFree(ctypes.cast(out, ctypes.c_void_p))
 
 
+MAX_PID = 2**31 - 1
+
+
 def pid_alive(pid: int) -> bool:
+    if not 0 < pid <= MAX_PID:
+        return True
     if os.name != "nt":
         try:
             os.kill(pid, 0)
@@ -59,3 +66,14 @@ def pid_alive(pid: int) -> bool:
         return code.value == 259                             # STILL_ACTIVE
     finally:
         kernel32.CloseHandle(handle)
+
+
+def short_path(path: str) -> str | None:
+    """The Windows 8.3 short form of an existing path, or None."""
+    if os.name != "nt":
+        return None
+    import ctypes
+
+    buffer = ctypes.create_unicode_buffer(1024)
+    size = ctypes.windll.kernel32.GetShortPathNameW(str(path), buffer, len(buffer))
+    return buffer.value if 0 < size < len(buffer) else None

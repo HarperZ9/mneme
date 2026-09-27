@@ -46,3 +46,18 @@ def snapshot_root(tmp_path_factory, monkeypatch) -> Path:
     root = tmp_path_factory.mktemp("state") / "mneme" / "snapshots"
     monkeypatch.setattr(snapshot_dir, "platform_snapshot_root", lambda: root)
     return root
+
+
+@pytest.fixture
+def dead_pid():
+    """The id of a process that has exited and whose id is not reused yet.
+
+    The Popen object keeps the process handle open on Windows, which reserves
+    the id until the test ends, so the id cannot be recycled to a live process
+    between the exit and the check."""
+    import subprocess
+
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait()
+    yield child.pid
+    del child

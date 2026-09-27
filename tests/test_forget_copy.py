@@ -65,15 +65,21 @@ def test_the_check_flags_planted_phrases_and_accepts_a_dated_correction(tmp_path
     assert findings(tmp_path) == ["late.md:1", "plain.md:1", "wrapped.py:1"]
 
 
-LOCALITY = re.compile(r"fully\s+local|stays\s+on\s+your\s+machine", re.IGNORECASE)
-QUALIFIER = re.compile(r"provider", re.IGNORECASE)
+LOCALITY = re.compile(
+    r"fully\s+local|stays?\s+on\s+your\s+machine|everything\s+is\s+local|"
+    r"all\s+local|never\s+leaves|stays?\s+local|local[\s-]+only", re.IGNORECASE)
+# the qualifier must say what goes where: "... goes to that model's provider"
+QUALIFIER = re.compile(r"\b(?:go|goes|sent|reach(?:es)?)\b[^.]{0,80}\bproviders?\b",
+                       re.IGNORECASE)
 
 
 def locality_findings(root: Path) -> list[str]:
-    """A locality claim must name, in the same paragraph, what leaves the machine."""
+    """A locality claim must name, in the same paragraph, what leaves the machine.
+
+    Docs and Python files (docstrings, comments, runtime strings) are read."""
     found = []
     for path in _files(root):
-        if path.suffix != ".md":
+        if path.suffix not in (".md", ".py"):
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         for paragraph_start, paragraph in _paragraphs(text):
@@ -94,8 +100,12 @@ def test_no_doc_claims_locality_without_naming_model_providers():
 
 def test_the_locality_check_flags_a_bare_claim_and_accepts_a_qualified_one(tmp_path):
     (tmp_path / "bare.md").write_text("Zero deps, fully local.\n", encoding="utf-8")
+    (tmp_path / "loose.md").write_text("It stays on your machine; no provider sees it.\n",
+                                       encoding="utf-8")
+    (tmp_path / "tour.py").write_text('"""A tour.\n\nEverything is local."""\n',
+                                      encoding="utf-8")
     (tmp_path / "ok.md").write_text(
         "Local by default: the store stays on your machine; text you send to an\n"
         "LLM extractor goes to that model's provider.\n", encoding="utf-8")
 
-    assert locality_findings(tmp_path) == ["bare.md:1"]
+    assert locality_findings(tmp_path) == ["bare.md:1", "loose.md:1", "tour.py:3"]

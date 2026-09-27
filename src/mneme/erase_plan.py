@@ -15,7 +15,11 @@ A selection names memories, turns or sessions. The plan is the closure:
      without the source turns.
   4. Duplicates: turns and memories of the same users that repeat an erased
      text whole (erase_text.py), with everything derived from them, repeated
-     until no new duplicate appears. Turns the caller keeps are left out.
+     until no new duplicate appears, for at most MAX_DUPLICATE_ROUNDS rounds;
+     a duplicate a later round would have found stays in the store, and the
+     receipt counts it as residue. A turn belongs to the users of the memories
+     that cite it, else of the memories in its session (erase_index.py).
+     Turns the caller keeps are left out.
 
 Collateral and duplicates are listed so a caller can consent to them. The
 digest binds the sorted ids, the options, and the content hash of every row
@@ -73,9 +77,11 @@ def _grow(index: Index, turns: dict, named: set[str], seeds: set[str], base: set
         texts = ([index.rows[m].text for m in memories]
                  + [turns[t][0] for t in all_turns if t in turns])
         users = {index.rows[m].user for m in memories}
+        sessions = ({index.rows[m].session for m in memories}
+                    | {turns[t][2] for t in all_turns if t in turns})
         new_turns, new_memories = duplicates(
             index, turns, texts, skip_turns=all_turns | kept_sources,
-            skip_memories=memories, users=users)
+            skip_memories=memories, users=users, sessions=sessions)
         if not (new_turns or new_memories):
             break
         dup_turns |= new_turns

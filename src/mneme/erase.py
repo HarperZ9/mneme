@@ -2,8 +2,8 @@
 what was checked and what remains.
 
 `plan_erase` (erase_plan.py) computes what goes. `apply_erase` sweeps orphaned
-replay snapshots, removes this store's snapshots, then recomputes the plan
-under the write lock and refuses a digest that no longer matches. In one
+replay snapshots, then recomputes the plan under the write lock and refuses a
+digest that no longer matches, so a refused erase changes nothing. In one
 transaction with `secure_delete` on, it deletes every row in the plan, appends
 one audit entry per erased row, deletes the salts of the erased memories'
 blinded history (audit_blind.py) and their merge links, and sets
@@ -14,13 +14,16 @@ never stored. The salts are returned only when the caller asks
 (`emit_openings`); the CLI prints them with --emit-opening and the MCP tool
 never asks. The reason is checked first (erase_reason.py).
 
-After the commit, `scrub_store` checkpoints a WAL database and runs VACUUM
-with `temp_store=MEMORY` (so the transient copy stays out of the OS temp
-directory). The receipt (erase_receipt.py) removes this store's snapshots
-again, scans the database files and known copies for erased bytes, and names
-what the erase could not reach; then the marker is cleared. A failure after
-the commit returns a receipt with status `erased_unverified` instead of an
-error, because the rows are already gone; the marker stays for `mneme scrub`.
+After the commit, this store's replay snapshots are removed, and
+`scrub_store` checkpoints a WAL database and runs VACUUM with
+`temp_store=MEMORY` (so the transient copy stays out of the OS temp
+directory). The receipt (erase_receipt.py) removes the snapshots again, scans
+the database files and known copies for erased bytes, and names what the
+erase could not reach. The marker is cleared only when the scrub and the
+snapshot removal both finished (erase_finish.finished); otherwise it stays,
+and status and doctor warn until `mneme scrub` finishes. A failure after the
+commit returns a receipt with status `erased_unverified` instead of an error,
+because the rows are already gone; the marker stays for `mneme scrub`.
 """
 from __future__ import annotations
 
@@ -32,7 +35,8 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import audit_blind, audit_writer, erase_finish, snapshot_dir
+from . import audit_blind, audit_writer, erase_finish, erase_outside, snapshot_dir
+from .erase_index import cited
 from .erase_plan import EraseTargetNotFound, Selection, plan_erase
 from .erase_reason import ErasedTextInReasonError, check_reason
 from .erase_receipt import RECEIPT_SCHEMA, build_receipt, db_path, remove_snapshots
@@ -139,7 +143,7 @@ def _delete_merges(conn: sqlite3.Connection, plan: dict) -> int:
     memories, dropped, turns = set(plan["memories"]), set(plan["merged_away"]), set(plan["turns"])
     doomed = [d for d, kept, raw in conn.execute(
                   "SELECT dropped_id, kept_id, source_ids FROM merges")
-              if kept in memories or d in dropped or set(json.loads(raw or "[]")) & turns]
+              if kept in memories or d in dropped or set(cited(raw)) & turns]
     for dropped_id in doomed:
         conn.execute("DELETE FROM merges WHERE dropped_id=?", (dropped_id,))
     return len(doomed)
@@ -157,14 +161,13 @@ def _erase_in_transaction(store, selection: Selection, expected: str, reason: st
     check_reason(reason, texts + [x for s in subjects for x in s.locators()],
                  _identifiers(subjects, plan))
     legacy = legacy_audit_rows(conn, subjects, plan["merged_away"])
-    last_ord = int(audit_writer.meta_get(conn, "ord") or -1)
     openings = _delete_and_audit(conn, subjects, reason)
     salts = audit_blind.delete_salts(conn, plan["memories"])
     _delete_merges(conn, plan)
     erase_finish.mark_pending(conn)
     return {"plan": plan, "subject_texts": texts, "legacy": legacy,
             "texts": texts + [s.origin for s in subjects if s.origin],
-            "openings": openings, "salts_deleted": salts, "last_ord_before": last_ord}
+            "openings": openings, "salts_deleted": salts}
 
 
 def _pragma(conn: sqlite3.Connection, name: str) -> int:
@@ -186,22 +189,28 @@ def _committed(store, selection: Selection, expected: str, reason: str) -> dict:
 def _unverified(work: dict, exc: Exception, emit_openings: bool) -> dict:
     plan = work["plan"]
     receipt = {"schema": RECEIPT_SCHEMA, "status": "erased_unverified",
-               "findings": ["post_commit_failure"], "plan_sha256": plan["plan_sha256"],
+               "findings": ["post_commit_failure"],
                "keep_sources": plan["keep_sources"], "counts": plan["counts"],
                "erase_refs": [{"ref": o["erase_ref"], "layer": o["layer"]}
                               for o in work["openings"]],
-               "error": exc.__class__.__name__, "remedy": UNVERIFIED_REMEDY}
+               "error": exc.__class__.__name__, "remedy": UNVERIFIED_REMEDY,
+               "out_of_reach": erase_outside.named_only()}
     if emit_openings:
         receipt["openings"] = work["openings"]
     return receipt
 
 
 def _after_commit(store, work: dict, reason: str, emit_openings: bool) -> dict:
+    conn = store.conn
     try:
+        work["snapshots_before"] = remove_snapshots(conn, db_path(conn))
         scrub = scrub_store(store)
         receipt = build_receipt(store, work, scrub, reason=reason,
                                 emit_openings=emit_openings)
-        erase_finish.clear_pending(store.conn)
+        if erase_finish.finished(scrub, receipt["snapshots"]):
+            erase_finish.clear_pending(conn)
+        else:
+            erase_finish.mark_scanned(conn)
     except Exception as exc:          # the rows are gone: report it, do not refuse
         _LOG.warning("mneme: erase committed, then %s: %s", exc.__class__.__name__, exc)
         return _unverified(work, exc, emit_openings)
@@ -218,13 +227,11 @@ def apply_erase(store, selection: Selection, expected_sha256: str, *,
         raise RuntimeError("erase refused: the store has an open transaction; "
                            "commit or roll it back first")
     snapshot_dir.startup_sweep()
-    before = remove_snapshots(conn, db_path(conn))
     prior = {name: _pragma(conn, name) for name in ("secure_delete", "temp_store")}
     conn.execute("PRAGMA secure_delete=ON")
     conn.execute("PRAGMA temp_store=MEMORY")
     try:
         work = _committed(store, selection, expected_sha256, reason)
-        work["snapshots_before"] = before
         return _after_commit(store, work, reason, emit_openings)
     finally:
         for name, value in prior.items():
