@@ -14,7 +14,8 @@ Two kinds of change, kept distinct on purpose:
                timeline never shows it again. The audit log keeps one
                tombstone per erased row. The erase receipt names what can
                still hold the text: a copy the erase did not reach (another
-               user's row, an earlier audit reason, a backup), which it counts.
+               user's row, an earlier audit reason, a backup), which it
+               names, and counts where it can.
 
 `history(...)` returns the ordered timeline of matching memories with their
 validity windows; `as_of` (on recall/memories) reconstructs what was known at a

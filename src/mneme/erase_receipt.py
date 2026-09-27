@@ -3,15 +3,18 @@
 The receipt carries counts, random erase refs, the scrub result, a residual
 scan of the database files, the residue inside the store the erase could not
 remove (erase_residue.py), and the copies outside its reach
-(erase_outside.py). It never carries erased text, a content-derived id or a
-path. The openings of the erase commitments ride along only when the caller
-asks for them (the CLI's --emit-opening; the MCP tool never does).
+(erase_outside.py). It never carries erased text, a path, or the plan digest,
+which a guessed text would rebuild. The openings of the erase commitments
+ride along only when the caller asks for them (the CLI's --emit-opening, on a
+terminal; the MCP tool never does).
 
-`status` is `erased` only when every check passed:
+`findings` lists a code for every check that did not pass, and `status` is
+`erased` only when `findings` is empty. Otherwise it is the first of:
 
 - `erased_residue_found`: rows still present, a scrub step failed, a
-  snapshot could not be removed, the scan found erased bytes, a kept row or
-  an earlier audit reason repeats an erased text, or a merged-away
+  snapshot could not be removed, the scan found erased bytes, a kept row
+  repeats an erased text whole, holds a short one or shares a 16-character
+  run with a long one, an audit reason quotes one, or a merged-away
   duplicate's source cannot be found;
 - `erased_copies_remain`: a known copy outside the store (a legacy temp
   snapshot, another store's snapshot, a snapshot removed while its process
@@ -20,11 +23,12 @@ asks for them (the CLI's --emit-opening; the MCP tool never does).
 - `erased_sources_kept`: the only copies left are the source turns the
   caller chose to keep.
 
-`findings` lists every reason. A failure after the commit gives
-`erased_unverified` instead (erase.py).
+A failure after the commit gives `erased_unverified` with the finding
+`post_commit_failure` instead (erase.py).
 """
 from __future__ import annotations
 
+import logging
 import sqlite3
 from pathlib import Path
 
@@ -33,7 +37,8 @@ from .erase_scan import scan_paths
 
 RECEIPT_SCHEMA = "mneme.erase-receipt/1"
 SIDECARS = ("-journal", "-wal", "-shm")
-NOT_KEPT = ("audit", "salts", "meta")
+KEPT_TABLES = ("turns", "memories", "merges")
+_LOG = logging.getLogger("mneme")
 ORDER = ("erased_residue_found", "erased_copies_remain", "incomplete",
          "erased_sources_kept")
 
@@ -48,16 +53,17 @@ def db_path(conn: sqlite3.Connection) -> Path | None:
 def kept_values(conn: sqlite3.Connection) -> list[str]:
     """Strings of the rows the store keeps, to tell kept text from residue.
 
-    Audit reasons, salts and meta are left out: text found there is residue."""
+    Only turns, memories, merge links and the schema count as kept. Text in
+    audit reasons, salts, meta or any other table is residue, so the scan
+    reports it."""
     values = [r[0] for r in conn.execute(
         "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL")]
-    tables = [r[0] for r in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'")]
-    for table in tables:
-        if table in NOT_KEPT:
-            continue
-        for row in conn.execute(f'SELECT * FROM "{table}"'):
-            values.extend(v for v in row if isinstance(v, str))
+    tables = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    for table in KEPT_TABLES:
+        if table in tables:
+            for row in conn.execute(f'SELECT * FROM "{table}"'):
+                values.extend(v for v in row if isinstance(v, str))
     return values
 
 
@@ -78,9 +84,13 @@ def _scan(db: Path | None, texts, kept) -> dict:
 
 
 def remove_snapshots(conn: sqlite3.Connection, db: Path | None) -> dict:
+    """Remove this store's snapshots. Any failure, a directory that cannot be
+    listed included, is counted and logged, never raised."""
     try:
         done = snapshot_dir.remove_store_snapshots(snapshot_dir.store_id_of(conn), db)
-    except OSError as exc:
+    except Exception as exc:          # a hostile name or directory must not stop an erase
+        _LOG.warning("mneme: could not remove replay snapshots: %s: %s",
+                     exc.__class__.__name__, exc)
         return {"removed": 0, "failed": 1, "removed_while_live": 0,
                 "error": exc.__class__.__name__}
     return {"removed": done["removed"], "failed": len(done["failed"]),
@@ -94,25 +104,35 @@ def _merge_counts(first: dict | None, second: dict) -> dict:
             for k in ("removed", "failed", "removed_while_live")}
 
 
-def _residue(conn, work: dict, scan: dict, file_backed: bool) -> dict:
+def freed_clusters_note(scrub: dict) -> str:
+    """What the freed disk blocks may hold, from what the scrub did."""
+    journal = ("write-ahead log" if scrub.get("journal_mode") == "wal"
+               else "rollback journal")
+    if scrub.get("vacuum") == "done":
+        start = "SQLite rewrote and shrank the database file"
+    else:
+        start = "The VACUUM did not finish, so SQLite did not rewrite the database file"
+    return (f"{start}; its {journal} and the replay snapshots mneme deleted with a "
+            "plain unlink leave disk blocks that are not overwritten and can hold "
+            "erased bytes until the file system reuses them")
+
+
+def _residue(conn, work: dict, scan: dict, scrub: dict, file_backed: bool) -> dict:
     plan = work["plan"]
     residue = {"legacy_audit_rows": work["legacy"],
                **erase_residue.kept_rows(conn, work["subject_texts"], plan["kept_sources"]),
                "audit_reasons_with_erased_text": erase_residue.audit_reasons(
-                   conn, work["subject_texts"], work["last_ord_before"]),
+                   conn, work["subject_texts"]),
                "unresolved_merged_sources": erase_residue.unresolved_merges(
                    conn, plan["memories"], plan["merged_away"]),
                "short_texts": {"count": scan.get("short_texts", 0),
                                "note": "texts under 16 bytes get structural checks only"},
                "kept_overlap": {"texts": scan.get("kept_overlap", 0),
                                 "note": "erased texts that share a 16-byte run with "
-                                        "rows the store keeps"}}
+                                        "rows the store keeps"},
+               "schema_downgrade": erase_residue.schema_downgrade(conn)}
     if file_backed:
-        residue["freed_clusters"] = {
-            "note": "SQLite rewrote and shrank the database file, and mneme deleted "
-                    "replay snapshots with a plain unlink; the disk blocks released by "
-                    "both, and the deleted rollback journal, are not overwritten and "
-                    "can hold erased bytes until the file system reuses them"}
+        residue["freed_clusters"] = {"note": freed_clusters_note(scrub)}
     return residue
 
 
@@ -124,6 +144,8 @@ def _findings(structural, scrub, snapshots, scan, residue, outside) -> list[str]
         (snapshots["failed"], "snapshot_removal_failed"),
         (scan["status"] == "hits", "scan_hits"),
         (residue["kept_rows_with_erased_text"]["rows"], "kept_rows_repeat_erased_text"),
+        (residue["kept_rows_with_short_text"]["rows"], "kept_rows_contain_short_text"),
+        (residue["kept_rows_sharing_erased_run"]["rows"], "kept_rows_share_erased_run"),
         (residue["audit_reasons_with_erased_text"]["count"], "audit_reasons_quote_erased_text"),
         (residue["unresolved_merged_sources"]["count"], "unresolved_merged_sources"),
         (held, "copies_hold_erased_text"),
@@ -137,6 +159,7 @@ def _findings(structural, scrub, snapshots, scan, residue, outside) -> list[str]
 
 _STATUS_OF = {"rows_present": 0, "scrub_incomplete": 0, "snapshot_removal_failed": 0,
               "scan_hits": 0, "kept_rows_repeat_erased_text": 0,
+              "kept_rows_contain_short_text": 0, "kept_rows_share_erased_run": 0,
               "audit_reasons_quote_erased_text": 0, "unresolved_merged_sources": 0,
               "copies_hold_erased_text": 1, "snapshot_removed_while_live": 1,
               "scan_incomplete": 2, "copies_unchecked": 2, "sources_kept": 3}
@@ -158,13 +181,13 @@ def build_receipt(store, work: dict, scrub: dict, *, reason: str,
     structural = {"rows_absent": rows_absent(conn, plan),
                   "salts_deleted": work["salts_deleted"],
                   **{k: scrub[k] for k in ("freelist_count", "journal", "wal_bytes")}}
-    residue = _residue(conn, work, scan, db is not None)
+    residue = _residue(conn, work, scan, scrub, db is not None)
     outside = erase_outside.out_of_reach(snapshot_dir.store_id_of(conn), db,
                                          work["texts"], kept)
     findings = _findings(structural, scrub, snapshots, scan, residue, outside)
     receipt = {
         "schema": RECEIPT_SCHEMA, "status": status_of(findings), "findings": findings,
-        "plan_sha256": plan["plan_sha256"], "reason": reason,
+        "reason": reason,
         "keep_sources": plan["keep_sources"], "counts": plan["counts"],
         "erase_refs": [{"ref": o["erase_ref"], "layer": o["layer"]}
                        for o in work["openings"]],

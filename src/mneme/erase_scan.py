@@ -24,7 +24,10 @@ Texts shorter than 16 bytes cannot be told apart from ordinary bytes, so they
 are counted as short texts and left to structural checks.
 
 What this does not show: that freed disk blocks, backups, snapshots outside
-the listed files, or other encodings are free of the text.
+the listed files, or other encodings are free of the text. It can also miss
+a text of 16 to 31 bytes that SQLite split across a page boundary into
+pieces each shorter than 16 bytes; that happens only when earlier columns of
+the row push the text to the boundary.
 """
 from __future__ import annotations
 

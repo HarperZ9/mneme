@@ -10,7 +10,7 @@
 
 ### Released v0.5.0 wheel
 
-The public `v0.5.0` wheel is the current released package. It covers the released memory, recall, drift, provenance, local-origin freshness, and MCP Crucible export/replay workflows documented below, and adds a forget that erases the raw turns and every derived form, `mneme status` and `mneme doctor`.
+The public `v0.5.0` wheel is the current released package. It covers the released memory, recall, drift, provenance, local-origin freshness, and MCP Crucible export/replay workflows documented below, and adds a forget that erases a memory's raw turns and every row derived from them in the store, with a receipt that names what it cannot reach (see [Accountable forgetting](#accountable-forgetting)), plus `mneme status` and `mneme doctor`.
 
 ```bash
 python -m pip install flywheel-mneme
@@ -179,7 +179,8 @@ blocks can keep the bytes until the file system reuses them.
 Mneme keeps everything above on your machine. What leaves it is what you send:
 turns given to an LLM extractor or an embedder go to that model's provider,
 and so does any result an MCP client reads (recall, provenance, forget
-previews). An erase cannot reach those copies.
+previews). The MCP client also keeps those results in its own session history
+on your machine. An erase cannot reach those copies.
 
 Use one mneme version per database file. An older mneme that reopens a
 database a newer one wrote gives the rows it writes only its own, older
@@ -298,8 +299,12 @@ history, and the source turns of near-duplicates that `consolidate` merged
 into it. Two kinds of extra rows need your consent. Collateral rows are other
 memories taken from the same turn. Duplicates are rows of the same user that
 repeat an erased text whole, such as a second turn that said the same
-sentence. The CLI shows both and asks, and the library refuses both unless
-you pass `allow_collateral=True`.
+sentence. A turn has no user of its own: it belongs to the users of the
+memories that cite it, or, when none does, of the memories in its session,
+and a turn in a session with no memories counts only when the erase already
+touches that session. Another user's copy is never a duplicate; the receipt
+reports it. The CLI shows both kinds and asks, and the library refuses both
+unless you pass `allow_collateral=True`.
 
 ```bash
 mneme forget <memory_id> --dry-run               # the plan: every row it would erase
@@ -309,41 +314,69 @@ mneme forget <turn_id> --turn --yes              # a turn, e.g. one an old forge
 mneme audit          # -> {"entries":…,"chain_intact":true,"log":[{"op":"erase", …}]}
 ```
 
-The plan shows row text only on a terminal or with `--show-text`, because a
-plan printed to a pipe can reach an agent's model. `--dry-run` changes
-nothing, not even an older database's version stamp.
+The plan shows row text and user names only on a terminal or with
+`--show-text`, because a plan printed to a pipe can reach an agent's model.
+`--dry-run` changes nothing, not even an older database's version stamp.
 
 Each erased row leaves one entry in the hash-chained audit log. The entry names
 a random erase ref and stores a salted commitment to the erased text. The salt
 is never stored, so the entry cannot confirm a guess of what was erased.
-`--emit-opening` prints the salts once; run it yourself, not through an agent.
-The reason is stored verbatim, so a reason that repeats erased text, or names
-an erased row's id or content hash, is refused. The check catches verbatim
-repeats only: a paraphrase or a spaced-out spelling passes.
+`--emit-opening` prints the salts once, and only to a terminal: when stdout is
+a pipe the command refuses before it deletes anything. The reason is stored
+verbatim, so a reason is refused when it repeats a 16-character run of erased
+text, holds one of its words of 8 or more characters (6 with a digit, such as
+a key or a PIN), is itself a short piece of it, or names an erased row's id
+or content hash. The check catches verbatim repeats only: a paraphrase or a
+spaced-out spelling passes.
 
-The rows go in one transaction with `secure_delete` on. Mneme then vacuums the
-file, removes this store's replay snapshots, and scans the database files and
-known copies for the erased bytes. The receipt's `status` is `erased` only when
-every check passed, and `findings` names each one that did not:
+The rows go in one transaction with `secure_delete` on. After the commit,
+mneme removes this store's replay snapshots, vacuums the file, and scans the
+database files and known copies for the erased bytes. A refused erase (a stale
+plan, a refused reason) changes nothing, snapshots included.
 
-- `erased_residue_found`: the store still holds erased text, for example in
-  another user's row, in an earlier audit reason that quoted it, or in the
-  source turn of a near-duplicate an older mneme merged away without a link.
-- `erased_copies_remain`: a replay snapshot outside this store's directory,
-  or one removed while its process still ran, holds erased text.
-- `incomplete`: a store file or a known copy could not be read.
-- `erased_sources_kept`: you kept the source turns (`--keep-sources`).
-- `erased_unverified`: the rows are gone, but the scrub or the scan did not
-  finish. `mneme status` and `mneme doctor` warn until `mneme scrub` finishes
-  it.
+The receipt has a `status` and a list of `findings`. `findings` holds a code
+for each check that did not pass, and `status` is `erased` only when the list
+is empty. Otherwise `status` is the first that applies of
+`erased_residue_found`, `erased_copies_remain`, `incomplete` and
+`erased_sources_kept`. A failure after the commit gives `erased_unverified`
+instead: the rows are gone, but the receipt could not be built. Each finding
+maps to one status:
+
+| Finding | Status | Meaning |
+|---|---|---|
+| `rows_present` | `erased_residue_found` | a planned row is still in the store |
+| `scrub_incomplete` | `erased_residue_found` | the WAL checkpoint or the VACUUM did not finish |
+| `snapshot_removal_failed` | `erased_residue_found` | a replay snapshot of this store could not be removed or listed |
+| `scan_hits` | `erased_residue_found` | the database files still hold 16 or more bytes of erased text that no kept row explains |
+| `kept_rows_repeat_erased_text` | `erased_residue_found` | a kept row, such as another user's, repeats an erased text whole |
+| `kept_rows_contain_short_text` | `erased_residue_found` | a kept row holds an erased text of 8 to 15 characters inside longer text |
+| `kept_rows_share_erased_run` | `erased_residue_found` | a kept row shares a 16-character run with a longer erased text |
+| `audit_reasons_quote_erased_text` | `erased_residue_found` | an audit reason quotes erased text or holds one of its tokens with a digit |
+| `unresolved_merged_sources` | `erased_residue_found` | an older mneme merged a near-duplicate away without a link, so its source turn may remain |
+| `copies_hold_erased_text` | `erased_copies_remain` | a legacy temp snapshot or another store's snapshot holds erased text |
+| `snapshot_removed_while_live` | `erased_copies_remain` | a snapshot was removed while its process ran, which can keep reading it on POSIX |
+| `scan_incomplete` | `incomplete` | a store file could not be read |
+| `copies_unchecked` | `incomplete` | a known copy could not be read, or is over the 1 GiB cap |
+| `sources_kept` | `erased_sources_kept` | you kept the source turns (`--keep-sources`) |
+| `post_commit_failure` | `erased_unverified` | a step after the commit raised |
 
 The CLI exits 3 for every status except `erased` and `erased_sources_kept`.
+While a scrub step or the snapshot removal has not finished, and after
+`erased_unverified`, the store keeps an "erase not finished" marker, and
+`mneme status` and `mneme doctor` warn until `mneme scrub` finishes the work.
+
+The byte scan looks for runs of 16 bytes or more. A text under 16 bytes gets
+structural checks only: its rows are gone, no kept row repeats it whole, and,
+when it has 8 or more characters, no kept row holds it as a word. For such a
+text `erased` means the rows are gone, not that a byte scan found nothing.
+
 The receipt also names what an erase cannot remove. Audit rows written
 earlier still name the erased rows by content-derived id, and such an id
 confirms a guessed text when its source turn id is known. The disk blocks
 SQLite released, and those of deleted snapshots, can hold old bytes until they
-are reused. Exports, backups, other copies of the database file, and text
-already sent to a model provider are out of its reach.
+are reused. Exports, backups, other copies of the database file, text already
+sent to a model provider, and the MCP client's own session history, which
+keeps every result it read, are out of its reach.
 
 `update` edits a memory's text while keeping its provenance, and `supersede`
 closes a fact while keeping it for history. From schema 5 their audit entries
@@ -371,8 +404,9 @@ From 0.5.0, `mneme.forget` takes two steps. A call with only `memory_id` returns
 the plan (targets, row ids and counts, the number of users but not their names,
 with text previews only when `include_previews` is set) and deletes nothing. A
 second call with `confirm_plan_sha256` applies exactly that plan and returns
-the receipt, without the commitment openings. When the plan lists collateral
-or duplicate rows, the second call also needs `allow_collateral: true`. The
+the receipt, without the commitment openings or the plan digest. When the plan
+lists collateral or duplicate rows, the second call also needs
+`allow_collateral: true`. The
 model that asked for the plan can send the digest too, so a host that launches
 mneme for an agent should require an owner-granted step for this tool.
 

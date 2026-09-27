@@ -4,9 +4,16 @@
   repeat an erased text whole (erase_text.repeats_whole). The plan offers the
   same user's copies as duplicates; what is left here belongs to another user
   or was kept by an older plan.
-- `kept_sources`: the source turns the caller chose to keep.
-- `audit_reasons_with_erased_text`: earlier audit entries whose free-text
-  reason quotes an erased text. The log is append-only, so they stay.
+- `kept_rows_with_short_text`: kept rows that hold an erased text of 8 to 15
+  characters as a word inside longer text (erase_text.contains_short).
+- `kept_rows_sharing_erased_run`: kept rows that share a 16-character run with
+  a longer erased text without repeating it whole, such as a key quoted in
+  another turn.
+- `kept_sources`: the source turns the caller chose to keep. They are left out
+  of the three counts above.
+- `audit_reasons_with_erased_text`: audit entries, this erase's own included,
+  whose free-text reason quotes an erased text or holds one of its
+  digit-bearing tokens. The log is append-only, so they stay.
 - `unresolved_merged_sources`: tombstones an older consolidation wrote
   ("merged into <id>") for a memory this erase removed, with no merge link.
   The merged-away duplicate's source turn cannot be found, so it may remain.
@@ -18,45 +25,75 @@ from __future__ import annotations
 import re
 import sqlite3
 
-from . import audit_blind
-from .erase_text import norm, repeats_in, repeats_whole, windows
+from . import audit_blind, schema_guard
+from .erase_text import (RUN, contains_short, norm, repeats_in, repeats_whole,
+                         shares_token, windows)
 
 UNSALTED_OPS = ("forget", "update", "supersede")
 _MERGED = re.compile(r"merged into (\S+)")
 
 
+def _classify(row: str, needles, long_windows: set[str]) -> str | None:
+    if any(repeats_whole(n, row) for n in needles):
+        return "whole"
+    if any(contains_short(n, row) for n in needles):
+        return "short"
+    if long_windows and any(w in long_windows for w in windows(row)):
+        return "run"
+    return None
+
+
 def kept_rows(conn: sqlite3.Connection, texts, kept_sources) -> dict:
     needles = [n for n in (norm(t) for t in texts) if n]
-    rows = kept = 0
+    long_windows: set[str] = set()
+    for needle in needles:
+        if len(needle) >= RUN:
+            long_windows |= windows(needle)
+    counts = {"whole": 0, "short": 0, "run": 0, "kept": 0}
     for table in ("turns", "memories"):
         for row_id, text in conn.execute(f"SELECT id, text FROM {table}"):
-            row = norm(text)
-            if any(repeats_whole(n, row) for n in needles):
-                if table == "turns" and row_id in kept_sources:
-                    kept += 1
-                else:
-                    rows += 1
+            found = _classify(norm(text), needles, long_windows)
+            if found is None:
+                continue
+            if table == "turns" and row_id in kept_sources:
+                counts["kept"] += found == "whole"      # kept by request
+            else:
+                counts[found] += 1
+    return _kept_report(counts)
+
+
+def _kept_report(counts: dict) -> dict:
     return {"kept_rows_with_erased_text": {
-                "rows": rows,
+                "rows": counts["whole"],
                 "note": "rows the store keeps that still repeat an erased text whole, "
                         "such as another user's copy; erase them to remove the text"},
+            "kept_rows_with_short_text": {
+                "rows": counts["short"],
+                "note": "rows the store keeps that hold an erased text of 8 to 15 "
+                        "characters inside longer text"},
+            "kept_rows_sharing_erased_run": {
+                "rows": counts["run"],
+                "note": "rows the store keeps that share a 16-character run with an "
+                        "erased text, such as a key quoted in another turn"},
             "kept_sources": {
-                "rows": kept,
+                "rows": counts["kept"],
                 "note": "source turns kept at the caller's request; they still hold "
                         "the text of the memories erased from them"}}
 
 
-def audit_reasons(conn: sqlite3.Connection, texts, since_ord: int) -> dict:
+def audit_reasons(conn: sqlite3.Connection, texts) -> dict:
     needles = [n for n in (norm(t) for t in texts) if n]
     count = 0
-    for (reason,) in conn.execute("SELECT reason FROM audit WHERE ord <= ?", (since_ord,)):
+    for (reason,) in conn.execute("SELECT reason FROM audit"):
         said = norm(reason)
         said_windows = windows(said)
-        if any(repeats_in(said, said_windows, n) for n in needles):
+        if any(repeats_in(said, said_windows, n)
+               or shares_token(said, n, digits_only=True) for n in needles):
             count += 1
     return {"count": count,
-            "note": "earlier audit entries whose reason quotes erased text; the log "
-                    "is append-only and hash-chained, so they stay"}
+            "note": "audit entries whose reason quotes erased text or holds one of "
+                    "its tokens with a digit; the log is append-only and "
+                    "hash-chained, so they stay"}
 
 
 def unresolved_merges(conn: sqlite3.Connection, memory_ids, merged_away) -> dict:
@@ -98,3 +135,17 @@ def legacy_audit_rows(conn: sqlite3.Connection, subjects, merged_away=()) -> dic
                     "text when its source turn id is known; the log is append-only, so "
                     "they stay. Rows from before schema 5 also keep unsalted hashes. "
                     "Blinded values lose their salts in this erase and open to nothing"}
+
+
+def schema_downgrade(conn: sqlite3.Connection) -> dict:
+    """Whether an older mneme reopened this store, as schema_guard recorded it."""
+    try:
+        stamped = schema_guard.read(conn)["downgrade_seen"]
+    except sqlite3.Error:
+        stamped = None
+    return {"stamped": stamped,
+            "note": "an older mneme reopened this database and stamped this schema "
+                    "version; rows it wrote carry that version's guarantees, such as "
+                    "unsalted hashes, which the legacy audit rows count"
+                    if stamped is not None else "no older mneme has reopened this "
+                                                "database since 0.5.0 opened it"}

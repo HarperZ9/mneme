@@ -10,8 +10,6 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
-import subprocess
-import sys
 import tempfile
 
 from mneme import AgentMemory
@@ -48,7 +46,7 @@ def test_a_writable_store_gets_a_random_stable_store_id(tmp_path):
 
 
 def test_a_replay_snapshot_lands_under_its_store_id_never_beside_the_database(
-        tmp_path, snapshot_root):
+        tmp_path, snapshot_root, dead_pid):
     db = _db(tmp_path)
     reader = AgentMemory(db, read_only=True, immutable_snapshot=True)
     path = reader.store.private_snapshot_path
@@ -77,17 +75,12 @@ def test_erase_removes_a_snapshot_whose_finalizer_never_ran(tmp_path, snapshot_r
     writer.close()
 
 
-def _dead_pid() -> int:
-    child = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"],
-                           capture_output=True, text=True, check=True)
-    return int(child.stdout)
-
 
 def test_the_sweep_removes_snapshots_of_dead_processes_and_keeps_live_ones(
-        tmp_path, snapshot_root):
+        tmp_path, snapshot_root, dead_pid):
     store_dir = snapshot_root / ("st_" + "0" * 32)
     store_dir.mkdir(parents=True)
-    dead = store_dir / f"mneme-replay-{_dead_pid()}-abc.db"
+    dead = store_dir / f"mneme-replay-{dead_pid}-abc.db"
     live = store_dir / f"mneme-replay-{os.getpid()}-def.db"
     unknown = store_dir / "mneme-replay-legacyname.db"
     for path in (dead, live, unknown):

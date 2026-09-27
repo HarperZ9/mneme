@@ -10,8 +10,6 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-import subprocess
-import sys
 
 import pytest
 
@@ -107,15 +105,10 @@ def test_scrub_removes_the_stores_snapshots(tmp_path, capsys):
     assert not left.exists()
 
 
-def _dead_pid() -> int:
-    child = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"],
-                           capture_output=True, text=True, check=True)
-    return int(child.stdout)
 
-
-def test_opening_a_writable_store_sweeps_orphaned_snapshots(tmp_path, snapshot_root):
+def test_opening_a_writable_store_sweeps_orphaned_snapshots(tmp_path, snapshot_root, dead_pid):
     db, _atom = _db(tmp_path)
-    orphan = snapshot_root / "unkeyed" / ("a" * 64) / f"mneme-replay-{_dead_pid()}-x.db"
+    orphan = snapshot_root / "unkeyed" / ("a" * 64) / f"mneme-replay-{dead_pid}-x.db"
     orphan.parent.mkdir(parents=True)
     orphan.write_bytes(b"planted orphan copy")
 
@@ -124,10 +117,10 @@ def test_opening_a_writable_store_sweeps_orphaned_snapshots(tmp_path, snapshot_r
     assert not orphan.exists()
 
 
-def test_the_mcp_server_sweeps_orphans_when_it_starts(snapshot_root):
+def test_the_mcp_server_sweeps_orphans_when_it_starts(snapshot_root, dead_pid):
     from mneme.mcp import serve
 
-    orphan = snapshot_root / ("st_" + "b" * 32) / f"mneme-replay-{_dead_pid()}-x.db"
+    orphan = snapshot_root / ("st_" + "b" * 32) / f"mneme-replay-{dead_pid}-x.db"
     orphan.parent.mkdir(parents=True)
     orphan.write_bytes(b"planted orphan copy")
 
