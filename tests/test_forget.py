@@ -1,7 +1,9 @@
 """Falsifiers for accountable forgetting — memory editing you can audit.
 
-Mneme leaves a hash-chained tombstone for each forget/update operation, so the
-store keeps a reviewable record that a memory was removed or changed.
+Mneme leaves a hash-chained tombstone for each row a forget erases and for each
+update, so the store keeps a reviewable record that a memory was removed or
+changed. A forget erases the memory's source turn too (see test_true_forget.py
+for the full erase contract).
 """
 from __future__ import annotations
 
@@ -10,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from mneme import AgentMemory
+from mneme import AgentMemory, audit_blind
 
 TURNS = [
     {"id": "t1", "role": "user", "text": "My name is Dana and I live in Denver."},
@@ -24,17 +26,18 @@ def _mem():
     return m
 
 
-def test_forget_removes_the_memory_and_leaves_a_tombstone():
+def test_forget_erases_the_memory_and_its_turn_and_leaves_tombstones():
     m = _mem()
     mid = m.store.memories(layer="L1")[0]["id"]
-    before_sha = m.store.memory(mid)["content_sha256"]
-    entry = m.forget(mid, reason="user requested deletion")
+    receipt = m.forget(mid, reason="user requested deletion")
     assert m.store.memory(mid) is None            # gone from recall
-    assert entry["op"] == "forget" and entry["before_sha"] == before_sha
+    assert m.store.turn("t1") is None             # and the raw turn it came from
+    assert receipt["counts"]["turns"] == 1 and receipt["counts"]["memories"] == {"L1": 1}
     log = m.audit()
-    assert log["entries"] == 1
-    assert log["log"][0]["reason"] == "user requested deletion"
-    assert log["chain_intact"] is True            # the tombstone is sealed
+    assert log["entries"] == 2                    # one tombstone per erased row
+    assert {e["op"] for e in log["log"]} == {"erase"}
+    assert {e["reason"] for e in log["log"]} == {"user requested deletion"}
+    assert log["chain_intact"] is True            # the tombstones are sealed
 
 
 def test_forgotten_memory_is_not_recalled():
@@ -55,7 +58,10 @@ def test_update_edits_text_keeps_provenance_and_records_before_after():
     assert entry["before_sha"] != entry["after_sha"]
     row = m.store.memory(denver["id"])
     assert "seattle" in row["text"].lower()
-    assert row["content_sha256"] == entry["after_sha"]
+    # schema 5 blinds the history: the entry commits to the new content hash
+    # with a salt kept in the salts table, and opens only to that hash
+    assert row["content_sha256"] not in (entry["before_sha"], entry["after_sha"])
+    assert audit_blind.opens(m.store.conn, entry["after_sha"], row["content_sha256"])
     # provenance (sources, criterion) is preserved through the edit
     prov_after = m.provenance(denver["id"])
     assert prov_after["source_ids"] == prov_before["source_ids"]
@@ -86,4 +92,4 @@ def test_audit_survives_reingest_and_ordering():
     m.forget(ids[0], reason="one")
     m.update(ids[1], "two", reason="two")
     log = m.audit()["log"]
-    assert [e["op"] for e in log] == ["forget", "update"]   # append-only, in order
+    assert [e["op"] for e in log] == ["erase", "erase", "update"]   # append-only, in order

@@ -8,9 +8,9 @@
 
 ## Install
 
-### Released v0.4.2 wheel
+### Released v0.5.0 wheel
 
-The public `v0.4.2` wheel is the current released package. It covers the released memory, recall, drift, provenance, accountable forgetting, local-origin freshness, and MCP Crucible export/replay workflows documented below.
+The public `v0.5.0` wheel is the current released package. It covers the released memory, recall, drift, provenance, local-origin freshness, and MCP Crucible export/replay workflows documented below, and adds a forget that erases the raw turns and every derived form, `mneme status` and `mneme doctor`.
 
 ```bash
 python -m pip install flywheel-mneme
@@ -21,7 +21,7 @@ python -m pip install flywheel-mneme
 To check the bytes yourself rather than trust the index, install the release wheel directly:
 
 ```bash
-python -m pip install "https://github.com/HarperZ9/mneme/releases/download/v0.4.2/flywheel_mneme-0.4.2-py3-none-any.whl"
+python -m pip install "https://github.com/HarperZ9/mneme/releases/download/v0.5.0/flywheel_mneme-0.5.0-py3-none-any.whl"
 ```
 
 ### Source install
@@ -38,7 +38,9 @@ For a non-editable install from the public source repository:
 python -m pip install "flywheel-mneme @ git+https://github.com/HarperZ9/mneme.git"
 ```
 
-Zero runtime dependencies · fully local · deterministic · fair-source.
+Zero runtime dependencies · local by default · deterministic · fair-source. The
+store stays on your machine; text you send through an LLM extractor, an
+embedder or an MCP client goes to that model's provider under its terms.
 
 ## Why it matters
 
@@ -142,6 +144,47 @@ print(mem.drift()["overall"])                     # MATCH until a source changes
 An embedder (`AgentMemory(..., embedder=fn)`) turns on the vector channel; an
 LLM `Extractor` plugs in for richer atoms. Neither is required: the
 deterministic floor works with no model and no API.
+
+## Where your memory lives
+
+The CLI takes `--state` before the command (`mneme --state mem.db recall …`),
+and the MCP server reads `MNEME_STATE`. Without either, mneme uses `mneme.db`
+in the directory it runs in, so a command run in another directory starts
+another database. From 0.5.0, two commands
+show where it is:
+
+```bash
+mneme status    # absolute path, default or not, files, row counts, snapshot directory
+mneme doctor    # the same, plus the audit chain; exit 1 when something needs you
+```
+
+Both open the database read-only: they never create a missing database and
+never write its rows (on a WAL database SQLite can create the `-wal` and
+`-shm` files, as any reader does). They warn when the database sits inside a
+git work tree, where, unless git ignores it, one `git add .` stages your
+memory for the next commit, when an older mneme has reopened it, when replay
+snapshots were left behind, and when an erase has not finished. The MCP
+`mneme.doctor` tool reports the path facts without opening the database, with
+your home directory written as `~`.
+
+Replay snapshots are full copies of the database. From 0.5.0 they live in a
+per-user state directory, `<LocalAppData>/mneme/snapshots` on Windows and
+`$XDG_STATE_HOME/mneme/snapshots` (or `~/.local/state/mneme/snapshots`)
+elsewhere, never beside the database. `mneme status` counts them. `forget`
+and `mneme scrub` delete the copies of their store, and snapshots whose
+process is gone are swept when a store opens for writing, when the MCP server
+starts, and when a snapshot is made. A delete is a plain unlink, so the disk
+blocks can keep the bytes until the file system reuses them.
+
+Mneme keeps everything above on your machine. What leaves it is what you send:
+turns given to an LLM extractor or an embedder go to that model's provider,
+and so does any result an MCP client reads (recall, provenance, forget
+previews). An erase cannot reach those copies.
+
+Use one mneme version per database file. An older mneme that reopens a
+database a newer one wrote gives the rows it writes only its own, older
+guarantees. From 0.5.0 mneme records when that happened, and `mneme doctor`
+reports it.
 
 ## The ecosystem: memory that traces to its source
 
@@ -248,17 +291,73 @@ source certification.
 
 ## Accountable forgetting
 
-Mneme deletes facts with an audit trail: `forget` and `update` leave a
-hash-chained tombstone, what was forgotten, its hash, and why, so the deletion
-record remains reviewable for GDPR-style "right to be forgotten" workflows.
+From 0.5.0, `forget` erases a memory, the
+turns it came from, and everything derived from them: memories that cite an
+erased turn or memory, scenario and persona rows, the fact's supersession
+history, and the source turns of near-duplicates that `consolidate` merged
+into it. Two kinds of extra rows need your consent. Collateral rows are other
+memories taken from the same turn. Duplicates are rows of the same user that
+repeat an erased text whole, such as a second turn that said the same
+sentence. The CLI shows both and asks, and the library refuses both unless
+you pass `allow_collateral=True`.
 
 ```bash
-mneme forget <memory_id> --reason "user requested deletion"
-mneme audit          # -> {"entries":1,"chain_intact":true,"log":[{"op":"forget", …}]}
+mneme forget <memory_id> --dry-run               # the plan: every row it would erase
+mneme forget <memory_id> --reason "user asked"   # shows the plan, then asks
+mneme forget <session> --session --yes           # a whole session
+mneme forget <turn_id> --turn --yes              # a turn, e.g. one an old forget left
+mneme audit          # -> {"entries":…,"chain_intact":true,"log":[{"op":"erase", …}]}
 ```
 
-`update` edits a memory's text while keeping its provenance and recording the
-before/after hash. Tamper a tombstone and the chain breaks.
+The plan shows row text only on a terminal or with `--show-text`, because a
+plan printed to a pipe can reach an agent's model. `--dry-run` changes
+nothing, not even an older database's version stamp.
+
+Each erased row leaves one entry in the hash-chained audit log. The entry names
+a random erase ref and stores a salted commitment to the erased text. The salt
+is never stored, so the entry cannot confirm a guess of what was erased.
+`--emit-opening` prints the salts once; run it yourself, not through an agent.
+The reason is stored verbatim, so a reason that repeats erased text, or names
+an erased row's id or content hash, is refused. The check catches verbatim
+repeats only: a paraphrase or a spaced-out spelling passes.
+
+The rows go in one transaction with `secure_delete` on. Mneme then vacuums the
+file, removes this store's replay snapshots, and scans the database files and
+known copies for the erased bytes. The receipt's `status` is `erased` only when
+every check passed, and `findings` names each one that did not:
+
+- `erased_residue_found`: the store still holds erased text, for example in
+  another user's row, in an earlier audit reason that quoted it, or in the
+  source turn of a near-duplicate an older mneme merged away without a link.
+- `erased_copies_remain`: a replay snapshot outside this store's directory,
+  or one removed while its process still ran, holds erased text.
+- `incomplete`: a store file or a known copy could not be read.
+- `erased_sources_kept`: you kept the source turns (`--keep-sources`).
+- `erased_unverified`: the rows are gone, but the scrub or the scan did not
+  finish. `mneme status` and `mneme doctor` warn until `mneme scrub` finishes
+  it.
+
+The CLI exits 3 for every status except `erased` and `erased_sources_kept`.
+The receipt also names what an erase cannot remove. Audit rows written
+earlier still name the erased rows by content-derived id, and such an id
+confirms a guessed text when its source turn id is known. The disk blocks
+SQLite released, and those of deleted snapshots, can hold old bytes until they
+are reused. Exports, backups, other copies of the database file, and text
+already sent to a model provider are out of its reach.
+
+`update` edits a memory's text while keeping its provenance, and `supersede`
+closes a fact while keeping it for history. From schema 5 their audit entries
+hold salted commitments to the old and new versions instead of plain hashes.
+The salts sit in the store under the memory they describe, so the history can
+be checked while the memory lives. An erase deletes the salts with the rows,
+and the commitments then open to nothing. The entries keep the memory's
+content-derived id, which the receipt counts. Entries written before schema 5
+keep plain hashes, and the erase receipt counts them. Tamper any entry and the
+chain breaks.
+
+In 0.4.2 and earlier, `forget` deleted the memory row only and left the raw
+turn in the store. `mneme status` counts those forget entries and the turns no
+memory cites, and `mneme forget <turn_id> --turn` erases such a turn.
 
 ## Agents plug in over MCP
 
@@ -266,7 +365,20 @@ before/after hash. Tamper a tombstone and the chain breaks.
 mneme mcp          # JSON-RPC 2.0 over stdio; MNEME_STATE points at the DB
 ```
 
-The released `v0.4.2` wheel exposes the MCP memory, recall, drift, provenance, origin recheck, forget, audit, status, doctor, Crucible export, and Crucible replay tools.
+The released `v0.5.0` wheel exposes the MCP memory, recall, drift, provenance, origin recheck, forget, audit, status, doctor, Crucible export, and Crucible replay tools.
+
+From 0.5.0, `mneme.forget` takes two steps. A call with only `memory_id` returns
+the plan (targets, row ids and counts, the number of users but not their names,
+with text previews only when `include_previews` is set) and deletes nothing. A
+second call with `confirm_plan_sha256` applies exactly that plan and returns
+the receipt, without the commitment openings. When the plan lists collateral
+or duplicate rows, the second call also needs `allow_collateral: true`. The
+model that asked for the plan can send the digest too, so a host that launches
+mneme for an agent should require an owner-granted step for this tool.
+
+From 0.5.0, `mneme.doctor` also returns the database's absolute path (home
+written as `~`), whether it came from `MNEME_STATE`, the replay snapshot
+directory and any warnings, without opening the database.
 
 MCP tools `mneme.to_crucible` and `mneme.replay_crucible` reuse the same replay library boundaries as the CLI. A recall
 through MCP returns the same re-derivable receipt, so the agent (or its operator)
@@ -319,8 +431,14 @@ cites its atoms, so it is drift-checkable too (a scenario whose atom is gone is
 ## Guarantees
 
 - **Zero runtime dependencies** (stdlib `sqlite3`). `pytest` is the only dev dep.
-- **Deterministic core.** Stored hashes and default rankings are derived from
-  the supplied turns, so the same input rebuilds the same memory state.
+- **Deterministic core.** Memory rows, their hashes and default rankings are
+  derived from the supplied turns, so the same input rebuilds the same
+  memories. Some values are random on purpose: the store id that names the
+  replay snapshot directory, the refs and salted commitments in the audit
+  entries an erase writes, and the salted commitments in update, supersede and
+  row-level forget entries. The erase entries cannot confirm a guess of what
+  was erased. The other entries keep a content-derived memory id, which can,
+  and the erase receipt counts them.
 - **Tests are the contract.** The core workflows above have regression coverage
   with false-success controls for recall, drift, audit, and ingestion.
 

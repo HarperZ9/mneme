@@ -2,9 +2,9 @@
 
 Load-bearing: (1) superseding a fact KEEPS the old value with a validity window,
 so history shows the timeline and recall(as_of) reconstructs the past; (2)
-current recall only sees the current fact; (3) FORGET (GDPR) erases — a forgotten
-fact never appears in history, unlike a superseded one; (4) every transition is
-in the audit log.
+current recall only sees the current fact; (3) FORGET erases: a forgotten fact
+and its successors never appear in history, unlike a superseded one; (4) every
+transition is in the audit log.
 """
 from __future__ import annotations
 
@@ -57,10 +57,11 @@ def test_forget_erases_but_supersede_preserves():
     m, denver = _lived()
     # Denver was superseded -> still in history
     assert any("Denver" in t["text"] for t in m.history(predicate="lives_in", user="a")["timeline"])
-    # now FORGET the (superseded) Denver memory -> GDPR erasure removes it
-    m.forget(denver, reason="right to be forgotten")
+    # now FORGET the (superseded) Denver memory: erase removes the whole timeline
+    m.forget(denver, reason="user asked to erase")
     hist = m.history(predicate="lives_in", user="a")
     assert all("Denver" not in t["text"] for t in hist["timeline"])   # erased, not resurrectable
+    assert hist["timeline"] == []            # the successor cites Denver, so it goes too
 
 
 def test_every_transition_is_in_the_audit_log():

@@ -102,3 +102,6 @@ jobs:
           # PEP 740 attestations: the index records who built these bytes and
           # from which workflow, verifiable without trusting us.
           attestations: true
+          # A second run for the same version (tag push, then Release) finds the
+          # files already uploaded and finishes instead of failing.
+          skip-existing: true

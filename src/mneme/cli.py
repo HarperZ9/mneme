@@ -12,6 +12,8 @@ import tempfile
 from pathlib import Path
 
 from . import __version__
+from .cli_forget import add_parsers as add_forget_parsers
+from .cli_state import add_parsers as add_state_parsers
 from .memory import AgentMemory
 from .store import SQLITE_SIDECAR_SUFFIXES, quiescent_snapshot_path
 
@@ -207,7 +209,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="mneme", description="accountable agent memory")
     p.add_argument("--version", action="version", version=f"mneme {__version__}")
     p.add_argument("--state", default="mneme.db",
-                   help="path to the SQLite memory DB (default: mneme.db)")
+                   help="path to the SQLite memory DB (default: mneme.db in the current directory; see `mneme status`)")
     sub = p.add_subparsers(dest="command", required=True)
 
     rem = sub.add_parser("remember", help="record turns (L0) and extract atoms (L1) with provenance")
@@ -249,10 +251,8 @@ def build_parser() -> argparse.ArgumentParser:
     sc.add_argument("--user", default="", help="scope the scenarios to one user (multi-tenant)")
     sc.set_defaults(func=cmd_scenarios)
 
-    fg = sub.add_parser("forget", help="delete a memory, leaving an auditable tombstone")
-    fg.add_argument("memory_id")
-    fg.add_argument("--reason", default="")
-    fg.set_defaults(func=cmd_forget)
+    add_forget_parsers(sub)                     # forget and scrub: cli_forget.py
+    add_state_parsers(sub)                      # status and doctor: cli_state.py
 
     up = sub.add_parser("update", help="edit a memory's text, recording before/after in the audit log")
     up.add_argument("memory_id")
@@ -260,7 +260,8 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--reason", default="")
     up.set_defaults(func=cmd_update)
 
-    au = sub.add_parser("audit", help="show the hash-chained history of every forget/update")
+    au = sub.add_parser("audit", help="show the hash-chained history of every erase, "
+                                          "forget, update and supersede")
     au.set_defaults(func=cmd_audit)
 
     insp = sub.add_parser("inspect", help="render a self-contained white-box HTML view of the memory")
@@ -339,15 +340,6 @@ def build_parser() -> argparse.ArgumentParser:
     mcp = sub.add_parser("mcp", help="serve mneme over MCP stdio (agent memory tools)")
     mcp.set_defaults(func=cmd_mcp)
     return p
-
-
-def cmd_forget(args) -> int:
-    entry = AgentMemory(args.state).forget(args.memory_id, reason=args.reason)
-    if entry is None:
-        print(f"no memory with id {args.memory_id!r}", file=sys.stderr)
-        return 2
-    print(json.dumps(entry, indent=2))
-    return 0
 
 
 def cmd_update(args) -> int:

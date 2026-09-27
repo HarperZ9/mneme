@@ -7,7 +7,17 @@ so a format change never surfaces as a raw sqlite traceback.
 """
 from __future__ import annotations
 
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
+
+# meta keys. store_id is a random id that names this store's replay snapshot
+# directory; the high-water mark only moves up, so a newer mneme can tell that
+# an older one reopened the database and stamped its own, lower version.
+META_STORE_ID = "store_id"
+META_SCHEMA_HIGH_WATER = "schema_high_water"
+META_SCHEMA_DOWNGRADE_SEEN = "schema_downgrade_seen"
+# set in an erase's transaction and cleared once its scrub and receipt finish;
+# while it is set, status and doctor tell the owner to run `mneme scrub`
+META_ERASE_PENDING = "erase_pending"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS turns (
@@ -31,6 +41,19 @@ CREATE TABLE IF NOT EXISTS audit (
     layer TEXT NOT NULL, before_sha TEXT NOT NULL, after_sha TEXT NOT NULL,
     reason TEXT NOT NULL, entry_sha TEXT NOT NULL
 );
+-- schema 5: the salts of the blinded update, supersede and forget values in
+-- the audit log (audit_blind.py), kept under the memory each one describes.
+-- An erase deletes a memory's salts, after which those values open to nothing.
+CREATE TABLE IF NOT EXISTS salts (
+    value TEXT PRIMARY KEY, subject_id TEXT NOT NULL, salt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_salts_subject ON salts(subject_id);
+-- schema 5: consolidation's merge links. A near-duplicate merged away loses its
+-- row, but its source turns stay, so an erase of the kept memory reads them here.
+CREATE TABLE IF NOT EXISTS merges (
+    dropped_id TEXT PRIMARY KEY, kept_id TEXT NOT NULL, source_ids TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_merges_kept ON merges(kept_id);
 """
 
 # (table, column, decl) added after the first published schema; applied only

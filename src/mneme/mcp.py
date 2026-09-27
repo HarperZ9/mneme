@@ -17,7 +17,7 @@ import os
 import sys
 from typing import Any
 
-from . import __version__
+from . import __version__, mcp_forget, snapshot_dir, state_report
 from .memory import AgentMemory
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
@@ -122,21 +122,16 @@ def _tool_defs() -> list[dict]:
                  "allowed_root": {"type": "string"},
                  "profile": {"type": "string",
                              "description": "default gather.docs.file-read/v1"}}}},
-        {"name": "mneme.forget",
-         "description": "Delete a memory, leaving an auditable tombstone (what "
-                        "was forgotten, its hash, why).",
-         "inputSchema": {"type": "object", "required": ["memory_id"],
-             "properties": {"memory_id": {"type": "string"},
-                            "reason": {"type": "string"}}}},
+        mcp_forget.TOOL,                        # two-step plan, then confirm
         {"name": "mneme.audit",
-         "description": "The hash-chained history of every forget/update, with a "
-                        "chain-intact verdict.",
+         "description": "The hash-chained history of every erase, forget, update "
+                        "and supersede, with a chain-intact verdict.",
          "inputSchema": {"type": "object", "properties": {}}},
         {"name": "mneme.status",
          "description": "Liveness and identity of the mneme MCP server (name, version, protocol). Network-free health probe.",
          "inputSchema": {"type": "object", "properties": {}}},
         {"name": "mneme.doctor",
-         "description": "Readiness diagnostic: identity plus the configured state-db path and the tools exposed.",
+         "description": "Readiness diagnostic: identity, the configured state-db path and its absolute location, the replay snapshot directory, warnings (a missing database, one inside a git work tree), and the tools exposed. Never opens the database.",
          "inputSchema": {"type": "object", "properties": {}}},
     ]
 
@@ -194,9 +189,9 @@ def call_tool(name: str, args: dict) -> str:
     if name in ("mneme.status", "mneme.doctor"):
         info = {"ok": True, "server": "mneme", "version": __version__,
                 "protocol": MCP_PROTOCOL_VERSION}
-        if name == "mneme.doctor":
-            info["state_path"] = _state_path()
-            info["tools"] = [t["name"] for t in _tool_defs()]
+        if name == "mneme.doctor":             # path facts only; never opens the DB
+            info.update(state_report.mcp_doctor(os.environ.get("MNEME_STATE")),
+                        tools=[t["name"] for t in _tool_defs()])
         return json.dumps(info, indent=2, ensure_ascii=False)
     if name == "mneme.origin_recheck":
         _reject_unknown(args, {"memory_id", "allowed_root", "profile"})
@@ -275,10 +270,7 @@ def call_tool(name: str, args: dict) -> str:
             raise ValueError(f"no memory with id {args['memory_id']!r}")
         return json.dumps(prov, indent=2, ensure_ascii=False)
     if name == "mneme.forget":
-        entry = mem.forget(str(args["memory_id"]), reason=str(args.get("reason", "")))
-        if entry is None:
-            raise ValueError(f"no memory with id {args['memory_id']!r}")
-        return json.dumps(entry, indent=2, ensure_ascii=False)
+        return mcp_forget.call(mem, args)
     if name == "mneme.audit":
         return json.dumps(mem.audit(), indent=2, ensure_ascii=False)
     raise ValueError(f"unknown tool: {name}")
@@ -312,6 +304,7 @@ def handle_request(req: dict) -> dict | None:
 def serve(stdin=None, stdout=None) -> int:
     stdin = stdin if stdin is not None else sys.stdin
     stdout = stdout if stdout is not None else sys.stdout
+    snapshot_dir.startup_sweep()               # orphaned replay copies go at start
     for line in stdin:
         line = line.strip()
         if not line:

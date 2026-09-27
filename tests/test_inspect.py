@@ -48,11 +48,12 @@ def test_inspector_shows_drift_after_a_source_changes():
 def test_inspector_shows_the_audit_log():
     m = _mem()
     mid = m.store.memories(layer="L1")[0]["id"]
-    m.forget(mid, reason="user requested")
+    receipt = m.forget(mid, reason="user requested")
     snap = build_inspect(m)
-    assert snap["audit"]["entries"] == 1
+    # the atom, its scenario, the persona that cites it, and its source turn
+    assert snap["audit"]["entries"] == len(receipt["erase_refs"]) == 4
     assert snap["audit"]["chain_intact"] is True
-    assert snap["audit"]["log"][0]["op"] == "forget"
+    assert {e["op"] for e in snap["audit"]["log"]} == {"erase"}
 
 
 def test_page_is_self_contained():

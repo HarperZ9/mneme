@@ -94,8 +94,8 @@ class AgentMemory:
     def supersede(self, old_id: str, new_text: str, *, reason: str = "") -> dict | None:
         """A fact CHANGED: create a new memory carrying `new_text` (grounded on
         the old one) and close the old memory's validity, KEEPING it for history.
-        Unlike forget (GDPR erasure), the timeline is preserved. None if `old_id`
-        is absent or already superseded."""
+        A forget erases the fact with its timeline; supersede preserves it. None
+        if `old_id` is absent or already superseded."""
         old = self.store.memory(old_id)
         if old is None or old["valid_until"] is not None:
             return None
@@ -191,18 +191,24 @@ class AgentMemory:
         return entity_graph(self, user=user, session=session)
 
     # -- accountable editing -------------------------------------------------
-    def forget(self, memory_id: str, reason: str = "") -> dict | None:
-        """Delete a memory, leaving a tombstone in the hash-chained audit log:
-        forgetting is auditable, not silent. None if the memory is absent."""
-        return self.store.forget(memory_id, reason)
+    def forget(self, memory_id: str, reason: str = "", *, include_sources: bool = True,
+               allow_collateral: bool = False) -> dict | None:
+        """Erase a memory, its source turns and everything derived from them, and
+        return the erase receipt (see erase.py). Raises CollateralError with the
+        plan when other memories share a source turn, unless allow_collateral.
+        include_sources=False keeps the source turns. None if the memory is absent."""
+        from .erase import forget_memory
+        return forget_memory(self.store, memory_id, reason, include_sources=include_sources,
+                             allow_collateral=allow_collateral)
 
     def update(self, memory_id: str, new_text: str, reason: str = "") -> dict | None:
         """Edit a memory's text, keeping its provenance and recording the
-        before/after hash in the audit log. None if the memory is absent."""
+        blinded before/after values in the audit log. None if the memory is absent."""
         return self.store.update(memory_id, new_text, reason)
 
     def audit(self) -> dict:
-        """The append-only, hash-chained history of every forget/update, with a
+        """The append-only, hash-chained history of every erase, forget, update
+        and supersede, with a
         verify verdict. What was known and when it changed is re-checkable."""
         rows = self.store.audit_log()
         return {"schema": "mneme.audit/1", "entries": len(rows),

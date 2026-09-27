@@ -111,7 +111,10 @@ def consolidate(memory, session: str | None = None, *, dup_threshold: float = 0.
     if apply:
         for m in plan["merges"]:
             for did in m["drop"]:
-                if memory.store.forget(did, reason=f"merged into {m['keep']} ({m['reason']})"):
+                # the link to the kept row lives in the merges table, not in the
+                # reason, so the append-only log holds no content-derived id here
+                if memory.store.forget(did, reason=f"merged into a {m['reason']}",
+                                       merged_into=m["keep"]):
                     merged += 1
     return {
         "schema": "mneme.consolidation/1",

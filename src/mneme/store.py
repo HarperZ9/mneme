@@ -17,12 +17,12 @@ import hashlib
 import json
 import os
 import sqlite3
-import tempfile
 import time
 import weakref
 from collections.abc import Iterable
 from pathlib import Path
 
+from . import audit_blind, audit_writer, schema_guard, snapshot_dir
 from .receipt import ProvenanceFormatError, ProvenanceReceipt, memory_hash, validate_source_ids
 from .schema import MIGRATIONS, SCHEMA, SCHEMA_VERSION
 
@@ -103,7 +103,7 @@ def _private_replay_snapshot(source_path: Path) -> Path:
     deadline = time.monotonic() + 10.0
     source_path = quiescent_snapshot_path(source_path)
     before = _snapshot_fingerprint(source_path, deadline=deadline)
-    fd, name = tempfile.mkstemp(prefix="mneme-replay-", suffix=".db")
+    fd, name = snapshot_dir.create_snapshot_file(source_path)
     private_path = Path(name)
     source = destination = None
     # mkstemp() has already created the file, so ownership starts here. Closing
@@ -186,7 +186,7 @@ def _close_private_snapshot(
 class Store:
     """Thin, deterministic wrapper over a SQLite memory DB. A monotonic `ord`
     counter (persisted in meta) orders rows without a wall clock, so a rebuild
-    from the same inputs is byte-identical."""
+    from the same inputs has the same turns and memories (meta holds a random id)."""
 
     SCHEMA_VERSION = SCHEMA_VERSION
 
@@ -195,6 +195,7 @@ class Store:
         self.read_only = read_only
         self.immutable_snapshot = immutable_snapshot
         self.private_snapshot_path: Path | None = None
+        self.schema_warning: str | None = None
         self._private_finalizer: weakref.finalize | None = None
         if immutable_snapshot and not read_only:
             raise ValueError("immutable_snapshot=True requires read_only=True")
@@ -231,6 +232,7 @@ class Store:
             self.conn.executescript(SCHEMA)
             self._migrate()
             self.conn.commit()
+            snapshot_dir.startup_sweep()
         if self.private_snapshot_path is not None:
             self._private_finalizer = weakref.finalize(
                 self,
@@ -263,7 +265,8 @@ class Store:
                     self.conn.execute(f"PRAGMA table_info({table})").fetchall()}
             if column.strip('"') not in cols:
                 self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
-        self._meta_set("schema_version", self.SCHEMA_VERSION)
+        self.schema_warning = schema_guard.stamp(self.conn, self.SCHEMA_VERSION)
+        snapshot_dir.ensure_store_id(self.conn)
         # anchor the audit head once (a legacy log at its current tail), so tail
         # truncation is detectable from here on
         if self._meta_get("audit_count") is None:
@@ -276,18 +279,14 @@ class Store:
 
     # -- meta (small key/value; ordinal + audit anchor + schema version) ------
     def _meta_get(self, key: str) -> str | None:
-        row = self.conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
-        return row["value"] if row else None
+        return audit_writer.meta_get(self.conn, key)
 
     def _meta_set(self, key: str, value: str) -> None:
-        self.conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)", (key, value))
+        audit_writer.meta_set(self.conn, key, value)
 
     # -- ordinal (clock-free ordering) ---------------------------------------
     def _next_ord(self) -> int:
-        row = self.conn.execute("SELECT value FROM meta WHERE key='ord'").fetchone()
-        n = int(row["value"]) + 1 if row else 0
-        self.conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('ord',?)", (str(n),))
-        return n
+        return audit_writer.next_ord(self.conn)
 
     # -- L0 turns ------------------------------------------------------------
     def add_turn(self, turn_id: str, session: str, role: str, text: str,
@@ -402,20 +401,11 @@ class Store:
 
     def supersede(self, old_id: str, new_id: str, reason: str = "") -> dict | None:
         """Close a memory's validity (a fact CHANGED, not erased): mark it
-        superseded by `new_id` as of now, KEEPING it for temporal history. Unlike
-        forget (which erases the text for GDPR), supersede preserves the timeline.
-        Returns the audit entry, or None if `old_id` is absent/already closed."""
-        row = self.memory(old_id)
-        if row is None or row["valid_until"] is not None:
-            return None
-        at = self._next_ord()
-        self.conn.execute(
-            "UPDATE memories SET valid_until=?, superseded_by=? WHERE id=?",
-            (at, new_id, old_id))
-        entry = self._audit("supersede", old_id, row["layer"],
-                            row["content_sha256"], "", reason or f"superseded by {new_id}")
-        self.conn.commit()
-        return entry
+        superseded by `new_id` as of now, KEEPING it for temporal history. A
+        forget erases a fact with its history; supersede preserves the timeline.
+        The audit entry holds a blinded value (audit_blind.py). Returns the
+        entry, or None if `old_id` is absent/already closed."""
+        return audit_blind.supersede(self, old_id, new_id, reason)
 
     def users(self) -> list[str]:
         rows = self.conn.execute('SELECT DISTINCT "user" FROM memories ORDER BY "user"').fetchall()
@@ -433,58 +423,19 @@ class Store:
 
     # -- accountable editing: forget / update leave a tombstone in an
     #    append-only, hash-chained audit log so the forgetting is itself auditable
-    def _audit(self, op: str, memory_id: str, layer: str, before: str,
-               after: str, reason: str) -> dict:
-        from .receipt import content_hash
-        prev = self.conn.execute(
-            "SELECT entry_sha FROM audit ORDER BY ord DESC LIMIT 1").fetchone()
-        prev_sha = prev["entry_sha"] if prev else ""
-        # hash the fields as SEPARATE content_hash parts (each \x1f-framed) so a
-        # field containing '|' cannot shift across a boundary and forge a
-        # colliding entry hash, as a pre-joined "a|b" string could.
-        entry = content_hash(prev_sha, op, memory_id, layer, before, after, reason)
-        o = self._next_ord()
-        self.conn.execute(
-            "INSERT INTO audit(ord,op,memory_id,layer,before_sha,after_sha,reason,entry_sha) "
-            "VALUES(?,?,?,?,?,?,?,?)",
-            (o, op, memory_id, layer, before, after, reason, entry))
-        # advance the committed head anchor in the same transaction, so
-        # verify_audit rejects a truncated or emptied log, not just an edited one
-        self._meta_set("audit_count", str(int(self._meta_get("audit_count") or "0") + 1))
-        self._meta_set("audit_head", entry)
-        self.conn.commit()
-        return {"op": op, "memory_id": memory_id, "layer": layer,
-                "before_sha": before, "after_sha": after, "reason": reason,
-                "entry_sha": entry}
-
-    def forget(self, memory_id: str, reason: str = "") -> dict | None:
-        """Delete a memory, leaving a tombstone receipt (what was forgotten, its
-        hash, why). Returns the audit entry, or None if the memory is absent."""
-        row = self.memory(memory_id)
-        if row is None:
-            return None
-        entry = self._audit("forget", memory_id, row["layer"],
-                            row["content_sha256"], "", reason)
-        self.conn.execute("DELETE FROM memories WHERE id=?", (memory_id,))
-        self.conn.commit()
-        return entry
+    def forget(self, memory_id: str, reason: str = "", *,
+               merged_into: str | None = None) -> dict | None:
+        """Row-level delete with a blinded tombstone, for consolidation (the text
+        survives in the kept duplicate `merged_into`, which inherits the row's
+        sources as lineage). A user's forget goes through erase.py, which also
+        removes source turns. Returns the audit entry, or None if absent."""
+        return audit_blind.forget(self, memory_id, reason, merged_into=merged_into)
 
     def update(self, memory_id: str, new_text: str, reason: str = "") -> dict | None:
         """Replace a memory's text, re-deriving its hash and leaving an audit
-        entry (before/after hash, why). Provenance (sources, criterion) is kept."""
-        from .receipt import memory_hash
-        row = self.memory(memory_id)
-        if row is None:
-            return None
-        source_ids = json.loads(row["source_ids"])
-        after = memory_hash(new_text, source_ids, row["criterion"])
-        entry = self._audit("update", memory_id, row["layer"],
-                            row["content_sha256"], after, reason)
-        self.conn.execute(
-            "UPDATE memories SET text=?, content_sha256=? WHERE id=?",
-            (new_text, after, memory_id))
-        self.conn.commit()
-        return entry
+        entry with blinded before/after values (audit_blind.py) and the reason.
+        Provenance (sources, criterion) is kept."""
+        return audit_blind.update(self, memory_id, new_text, reason)
 
     def audit_log(self) -> list:
         return self.conn.execute("SELECT * FROM audit ORDER BY ord").fetchall()
@@ -495,20 +446,7 @@ class Store:
         deleted, reordered, edited, OR truncated tombstone breaks it — you cannot
         quietly forget that you forgot something, and you cannot forget that you
         forgot by lopping off the tail."""
-        from .receipt import content_hash
-        prev = ""
-        count = 0
-        for e in self.audit_log():
-            prev = content_hash(prev, e["op"], e["memory_id"], e["layer"],
-                                e["before_sha"], e["after_sha"], e["reason"])
-            if prev != e["entry_sha"]:
-                return False
-            count += 1
-        head = self._meta_get("audit_head")
-        expected = self._meta_get("audit_count")
-        if head is None or expected is None:
-            return True                 # unanchored legacy log: chain-only check
-        return prev == head and count == int(expected)
+        return audit_writer.verify(self.conn)
 
     def close(self) -> str | None:
         if self._private_finalizer is not None and self._private_finalizer.alive:
