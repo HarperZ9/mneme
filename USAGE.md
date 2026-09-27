@@ -4,7 +4,7 @@ Mneme records memories with provenance, returns recall receipts that can be re-d
 
 ## Install
 
-The README names the current release and its install commands. The 0.5.0 changes described below (a forget that erases source turns and derived rows, `mneme status`, `mneme doctor`) are unreleased; use a source checkout for them:
+The README names the current release and its install commands. Version 0.5.0 adds the changes described below: a forget that erases source turns and derived rows, `mneme status` and `mneme doctor`. To work from a source checkout:
 
 ```bash
 python -m pip install -e .

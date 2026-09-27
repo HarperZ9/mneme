@@ -8,9 +8,9 @@
 
 ## Install
 
-### Released v0.4.2 wheel
+### Released v0.5.0 wheel
 
-The public `v0.4.2` wheel is the current released package. It covers the released memory, recall, drift, provenance, accountable forgetting, local-origin freshness, and MCP Crucible export/replay workflows documented below.
+The public `v0.5.0` wheel is the current released package. It covers the released memory, recall, drift, provenance, local-origin freshness, and MCP Crucible export/replay workflows documented below, and adds a forget that erases the raw turns and every derived form, `mneme status` and `mneme doctor`.
 
 ```bash
 python -m pip install flywheel-mneme
@@ -21,7 +21,7 @@ python -m pip install flywheel-mneme
 To check the bytes yourself rather than trust the index, install the release wheel directly:
 
 ```bash
-python -m pip install "https://github.com/HarperZ9/mneme/releases/download/v0.4.2/flywheel_mneme-0.4.2-py3-none-any.whl"
+python -m pip install "https://github.com/HarperZ9/mneme/releases/download/v0.5.0/flywheel_mneme-0.5.0-py3-none-any.whl"
 ```
 
 ### Source install
@@ -150,7 +150,7 @@ deterministic floor works with no model and no API.
 The CLI takes `--state` before the command (`mneme --state mem.db recall …`),
 and the MCP server reads `MNEME_STATE`. Without either, mneme uses `mneme.db`
 in the directory it runs in, so a command run in another directory starts
-another database. From 0.5.0 (unreleased; install from source), two commands
+another database. From 0.5.0, two commands
 show where it is:
 
 ```bash
@@ -291,7 +291,7 @@ source certification.
 
 ## Accountable forgetting
 
-From 0.5.0 (unreleased; install from source), `forget` erases a memory, the
+From 0.5.0, `forget` erases a memory, the
 turns it came from, and everything derived from them: memories that cite an
 erased turn or memory, scenario and persona rows, the fact's supersession
 history, and the source turns of near-duplicates that `consolidate` merged
@@ -365,7 +365,7 @@ memory cites, and `mneme forget <turn_id> --turn` erases such a turn.
 mneme mcp          # JSON-RPC 2.0 over stdio; MNEME_STATE points at the DB
 ```
 
-The released `v0.4.2` wheel exposes the MCP memory, recall, drift, provenance, origin recheck, forget, audit, status, doctor, Crucible export, and Crucible replay tools.
+The released `v0.5.0` wheel exposes the MCP memory, recall, drift, provenance, origin recheck, forget, audit, status, doctor, Crucible export, and Crucible replay tools.
 
 From 0.5.0, `mneme.forget` takes two steps. A call with only `memory_id` returns
 the plan (targets, row ids and counts, the number of users but not their names,

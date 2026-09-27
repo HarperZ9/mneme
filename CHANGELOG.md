@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 (unreleased)
+## 0.5.0 (2026-09-26)
 
 BREAKING. `forget` becomes a true forget, the MCP forget tool takes two steps,
 replay snapshots move to a per-user state directory, and schema 5 blinds the
