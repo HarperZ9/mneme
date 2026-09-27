@@ -1,5 +1,77 @@
 # Changelog
 
+## 0.5.1 (2026-09-26)
+
+Fixes to the 0.5.0 forget. The items marked Security or Privacy close gaps in
+0.5.0 where an erase kept the erased text, or a way to confirm it, while the
+receipt said `erased`, or touched another user's rows. Upgrade if you erase
+data with 0.5.0. The schema stays at 5 and needs no migration. The receipt
+drops `plan_sha256` and gains finding codes, so a caller that reads either
+should check the README table.
+
+- Security: a reason that holds a key from the erased text is refused. The
+  reason is stored verbatim in the append-only audit log, and 0.5.0 checked it
+  only for a 16-character run, so `rotated FAKE-KEY-7Q2Z9` kept the key for
+  good while the receipt said `erased`. A reason is now refused when it holds
+  a word of the erased text of 8 or more characters (6 with a digit), or is
+  itself a piece of it of 8 to 15 characters. Every audit reason, this
+  erase's own included, is checked for a quote of the erased text or a word
+  of it that has a digit, and a hit is residue.
+- Security: an erase no longer takes another user's turn as a duplicate.
+  Turns have no user column, and 0.5.0 counted a turn that no memory cites as
+  every user's. Erasing one user's memory then planned another user's uncited
+  turn with the same text as a same-user duplicate, the plan still reported
+  one user, and consenting to the duplicates deleted it. A turn now belongs to
+  the users of the memories that cite it, or, when none does, of the memories
+  in its session. A turn in a session with no memories counts only when the
+  erase already touches that session. Another user's copy stays, and the
+  receipt reports it as residue.
+- Privacy: the receipt no longer says `erased` while a kept row holds the
+  erased text. 0.5.0 missed a short erased text (8 to 15 characters, such as
+  a key) inside a longer kept row, a kept row that quotes a 16-character run
+  of a longer erased text, and text copied into a table mneme does not own,
+  which it treated as kept. These now give `kept_rows_contain_short_text`,
+  `kept_rows_share_erased_run` and `scan_hits`, and the status
+  `erased_residue_found`. Only turns, memories and merge links count as kept.
+- Privacy: less leaves through output that can reach a model.
+  `--emit-opening` prints the salts only to a terminal. When stdout is a pipe
+  it refuses before it deletes anything; 0.5.0 printed them to the pipe, and
+  an opening lets whoever holds the audit log confirm a guess of the erased
+  text. The receipt drops `plan_sha256`: the digest binds the content hashes
+  of the erased rows, so a guessed text, with the session and turn id it came
+  in under, rebuilt the digest and confirmed the guess. A
+  plan printed to a pipe no longer names users. The CLI prints the paths of
+  legacy temp snapshots to stderr instead of into the receipt. On Windows the
+  MCP `mneme.doctor` writes the home directory as `~` in any letter case,
+  with either slash, and in its 8.3 short form; 0.5.0 matched one exact
+  spelling, so another spelling put the owner's user name into model context.
+- Privacy: snapshot handling and the unfinished-erase marker. A snapshot
+  directory that cannot be listed counts as a failed removal; 0.5.0 read it
+  as empty and said `erased` while a snapshot holding the text remained. The
+  `meta.erase_pending` marker stays until the scrub and the snapshot removal
+  have both finished, so `mneme status` and `mneme doctor` keep warning; 0.5.0
+  cleared it when a reader held the WAL or a snapshot could not be removed.
+  A refused erase (a stale plan, a refused reason) leaves the store's replay
+  snapshots alone; 0.5.0 removed them before it checked the plan, including
+  one a live reader was using. A snapshot name with a process id out of range
+  is `unknown` and never swept; 0.5.0 on Windows cut such an id down to a
+  running system process and counted the file as live. A malformed merge row
+  no longer stops every erase of the store.
+- `mneme scrub` says whether the erase it finishes ran its residual scan
+  (`residual_scan`: `ran_at_erase` or `not_run`). A marker 0.5.0 left reads
+  as `not_run`.
+- The receipt names the MCP client's own session history as a copy out of
+  reach, in an `erased_unverified` receipt too. It reports whether an older
+  mneme reopened the store (`schema_downgrade`), and its note on freed disk
+  blocks names the journal the store uses and no longer claims a VACUUM that
+  did not finish.
+- The README maps every finding code to its status, and a test pins the table
+  to the code. Checks that run only on POSIX are described as POSIX-only. The
+  MCP `include_previews` description names duplicate rows. The tour runs
+  in-process.
+- The release check refuses a top CHANGELOG entry that still calls itself
+  unpublished, and the 0.5.0 entry below drops such a line.
+
 ## 0.5.0 (2026-09-26)
 
 BREAKING. `forget` becomes a true forget, the MCP forget tool takes two steps,
@@ -16,60 +88,40 @@ update and supersede history in the audit log.
   by `--turn` or `--session`.
 - The plan also takes duplicates: turns and memories of the same user that
   repeat an erased text whole, with what derives from them. They need the same
-  consent as collateral. A turn belongs to the users of the memories that cite
-  it, else of the memories in its session; a turn in a session with no
-  memories counts only when the erase touches that session, so another user's
-  turn is never offered. Consolidation now records a merge link (`merges`
+  consent as collateral. Consolidation now records a merge link (`merges`
   table) when it merges a near-duplicate away, and an erase of the kept memory
   takes the merged row's source turns too. The plan digest binds each row's
   content hash, so an edit between plan and confirm makes the plan stale.
 - One transaction deletes the rows and appends one `erase` audit entry per
   row, with `secure_delete` on. An entry names a random erase ref, never the
   content-derived id, and stores a salted commitment to the erased text whose
-  salt is never stored; `mneme forget --emit-opening` prints the salts once,
-  only to a terminal, and refuses on a pipe before deleting anything. A reason
-  that repeats a 16-character run of erased text, holds one of its words of 8
-  or more characters (6 with a digit), is itself a short piece of it, or names
-  an erased row's id, content hash or the plan digest (any 12-character run),
-  is refused, because reasons are stored verbatim. The check catches verbatim
-  repeats only.
-- After the commit, this store's replay snapshots are removed, a WAL store is
-  checkpointed, the file is vacuumed with `temp_store=MEMORY`, and the
-  database files are scanned for erased bytes. A refused erase changes
-  nothing, snapshots included. The
+  salt is never stored; `mneme forget --emit-opening` prints the salts once. A
+  reason that repeats erased text, or names an erased row's id, content hash
+  or the plan digest (any 12-character run), is refused, because reasons are
+  stored verbatim. The check catches verbatim repeats only.
+- After the commit, a WAL store is checkpointed, the file is vacuumed with
+  `temp_store=MEMORY`, this store's replay snapshots are removed (before the
+  transaction too), and the database files are scanned for erased bytes. The
   receipt reports the scan and, beside it, the residue the erase cannot remove
   (earlier audit rows that name erased rows by content-derived id, audit
   reasons that quote erased text, other users' rows that repeat it, freed disk
-  blocks, texts under 16 bytes, which get structural checks only) and the
-  copies out of its reach (exports, backups, other copies of the file, text
-  sent to a model provider, the MCP client's own session history, replay
+  blocks, texts under 16 bytes) and the copies out of its reach (exports,
+  backups, other copies of the file, text sent to a model provider, replay
   snapshots older versions left in the OS temp directory, and other stores'
-  snapshots, which are scanned). The receipt carries no plan digest and no
-  local path; the CLI prints the paths of legacy temp snapshots to stderr.
-- The receipt's `findings` lists a code for each check that did not pass
-  (the README maps each code to a status), and `status` is `erased` only when
-  the list is empty. Otherwise it is `erased_residue_found`,
-  `erased_copies_remain`, `incomplete` (a file could not be read) or
-  `erased_sources_kept`, and `erased_unverified` when a step after the commit
-  failed. A kept row that holds a short erased text, or shares a 16-character
-  run with a long one, is residue. A failure after the commit is no longer
-  reported as a refusal. The CLI exits 3 for every status but `erased` and
-  `erased_sources_kept`.
-- The erase transaction sets `meta.erase_pending`. It is cleared only when
-  the scrub and the snapshot removal both finished. While it is set, status
-  and doctor warn, and `mneme scrub` finishes the work, removing the store's
-  replay snapshots too, and says whether the erase ran its residual scan.
+  snapshots, which are scanned).
+- The receipt's `status` is `erased` only when every check passed, and
+  `findings` names the rest: `erased_residue_found`, `erased_copies_remain`,
+  `incomplete` (a file could not be read), `erased_sources_kept`, and
+  `erased_unverified` when a step after the commit failed. A failure after the
+  commit is no longer reported as a refusal. The CLI exits 3 for every status
+  but `erased` and `erased_sources_kept`.
+- The erase transaction sets `meta.erase_pending`; it is cleared when the
+  receipt is done. While it is set, status and doctor warn, and `mneme scrub`
+  finishes the work, removing the store's replay snapshots too.
 - The residual scan no longer caps the places it checks for each word, so kept
-  rows that share words with residue cannot hide it. Only turns, memories and
-  merge links count as kept, so text in any other table is reported. A link
-  is never listed as a snapshot, and no file in the shared temp directory is
-  read past 1 GiB. On POSIX such a file is also opened without following
-  links or blocking, and skipped when another user owns it; Windows has no
-  equivalent flags or owner ids here, so those checks do not run there.
-- A snapshot directory that cannot be listed counts as a failed removal
-  instead of reading as empty. A snapshot name with an out-of-range process id
-  is `unknown` and never swept, and a malformed merge row no longer stops an
-  erase.
+  rows that share words with residue cannot hide it. Files in the shared temp
+  directory are opened without following links or blocking, skipped when
+  another user owns them, and not read past 1 GiB.
 - `AgentMemory.forget` returns the erase receipt instead of one audit entry.
   `Store.forget` stays the row-level primitive consolidation uses.
 - MCP `mneme.forget` returns the plan and deletes nothing unless the call
@@ -77,8 +129,7 @@ update and supersede history in the audit log.
   with `include_previews`, and never an opening. The plan carries the number
   of users, not their names. Applying a plan with collateral or duplicate rows
   needs `allow_collateral: true`.
-- The CLI plan shows row text and user names only on a terminal or with
-  `--show-text`, and
+- The CLI plan shows row text only on a terminal or with `--show-text`, and
   `--dry-run` opens the database read-only. End of input at the prompt
   refuses instead of raising.
 - Replay snapshots live in `<LocalAppData>/mneme/snapshots` on Windows and in

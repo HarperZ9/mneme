@@ -8,9 +8,9 @@
 
 ## Install
 
-### Released v0.5.0 wheel
+### Released v0.5.1 wheel
 
-The public `v0.5.0` wheel is the current released package. It covers the released memory, recall, drift, provenance, local-origin freshness, and MCP Crucible export/replay workflows documented below, and adds a forget that erases a memory's raw turns and every row derived from them in the store, with a receipt that names what it cannot reach (see [Accountable forgetting](#accountable-forgetting)), plus `mneme status` and `mneme doctor`.
+The public `v0.5.1` wheel is the current released package. It covers the released memory, recall, drift, provenance, local-origin freshness, and MCP Crucible export/replay workflows documented below, a forget that erases a memory's raw turns and every row derived from them in the store, with a receipt that names what it cannot reach (see [Accountable forgetting](#accountable-forgetting)), and `mneme status` and `mneme doctor`. 0.5.1 fixes security and privacy gaps in the 0.5.0 forget; if you erase data with 0.5.0, upgrade. The [CHANGELOG](CHANGELOG.md) lists each fix.
 
 ```bash
 python -m pip install flywheel-mneme
@@ -21,7 +21,7 @@ python -m pip install flywheel-mneme
 To check the bytes yourself rather than trust the index, install the release wheel directly:
 
 ```bash
-python -m pip install "https://github.com/HarperZ9/mneme/releases/download/v0.5.0/flywheel_mneme-0.5.0-py3-none-any.whl"
+python -m pip install "https://github.com/HarperZ9/mneme/releases/download/v0.5.1/flywheel_mneme-0.5.1-py3-none-any.whl"
 ```
 
 ### Source install
@@ -398,7 +398,7 @@ memory cites, and `mneme forget <turn_id> --turn` erases such a turn.
 mneme mcp          # JSON-RPC 2.0 over stdio; MNEME_STATE points at the DB
 ```
 
-The released `v0.5.0` wheel exposes the MCP memory, recall, drift, provenance, origin recheck, forget, audit, status, doctor, Crucible export, and Crucible replay tools.
+The released `v0.5.1` wheel exposes the MCP memory, recall, drift, provenance, origin recheck, forget, audit, status, doctor, Crucible export, and Crucible replay tools.
 
 From 0.5.0, `mneme.forget` takes two steps. A call with only `memory_id` returns
 the plan (targets, row ids and counts, the number of users but not their names,
