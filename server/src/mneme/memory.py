@@ -1,0 +1,263 @@
+"""memory.py — AgentMemory: the accountable agent-memory database, composed.
+
+One facade over the core workflows: remember turns (L0), extract atoms (L1) with
+provenance, recall with a re-derivable receipt, flag drift when a source changes,
+and synthesize a persona (L3) from the atoms. Mneme records source provenance for
+stored memories, returns recall receipts that reproduce ranking, and reports
+drift verdicts when source checks run.
+
+Zero external dependencies (stdlib sqlite3). An embedder and an LLM extractor
+are optional edges injected here; the deterministic floor works with neither.
+"""
+from __future__ import annotations
+
+from collections.abc import Sequence
+from pathlib import Path
+
+from .drift import drift_report
+from .extract import Extractor, RuleExtractor, extract_atoms
+from .recall import Embedder, recall
+from .receipt import RecallReceipt, content_hash
+from .source import plan_source_turns, preflight_memory_writes
+from .store import Store
+
+_L1_CRITERION = "atomic user fact"
+
+
+class AgentMemory:
+    def __init__(self, path: str | Path = ":memory:", *,
+                 extractor: Extractor | None = None,
+                 embedder: Embedder | None = None,
+                 embed=None, read_only: bool = False,
+                 immutable_snapshot: bool = False):
+        from .embed import resolve_embedder
+        resolved_extractor = extractor or RuleExtractor()
+        resolved_embedder = embedder or resolve_embedder(embed)
+        self.store = Store(
+            path,
+            read_only=read_only,
+            immutable_snapshot=immutable_snapshot,
+        )
+        self.extractor = resolved_extractor
+        # `embed="ngram"` turns on the zero-dep local vector channel; `embedder=`
+        # takes a real embedding model. embedder wins if both are given.
+        self.embedder = resolved_embedder
+
+    # -- ingest --------------------------------------------------------------
+    def remember(self, session: str, turns: Sequence[dict], user: str = "") -> dict:
+        """Record raw turns (L0) and extract atoms (L1) with provenance. Each
+        turn is {role, text} (+ optional id). `user` scopes the memory to one
+        user (multi-tenant isolation); default "" is a single shared user.
+        Idempotent by content id. Returns a summary with the provenance receipts."""
+        planned = plan_source_turns(self.store, session, turns, user=user)
+        turn_rows = [t.extraction_row() for t in planned]
+        atoms = extract_atoms(turn_rows, self.extractor)
+        preflight_memory_writes(
+            self.store,
+            atoms,
+            criterion=_L1_CRITERION,
+            user=user,
+        )
+        for t in planned:
+            if t.write:
+                self.store.add_turn(t.id, session, t.role, t.text, origin=t.origin)
+        receipts = []
+        for aid, atom in atoms:
+            r = self.store.add_memory(aid, "L1", atom.text, [atom.source_id],
+                                      self.extractor.name, _L1_CRITERION,
+                                      session=session, user=user)
+            receipts.append(r.as_dict())
+        return {"session": session, "user": user, "turns": len(turn_rows),
+                "atoms": len(receipts), "extractor": self.extractor.name,
+                "provenance": receipts}
+
+    # -- recall --------------------------------------------------------------
+    def recall(self, query: str, *, strategy: str = "hybrid", top_k: int = 5,
+               layer: str | None = None, recency_weight: float = 0.0,
+               user: str | None = None, session: str | None = None,
+               as_of: int | None = None) -> RecallReceipt:
+        """Retrieve memories for `query` with a re-derivable ranking receipt.
+        `layer` None searches L1 atoms. `user`/`session` scope retrieval to one
+        tenant or conversation (None = across all, the default). recency_weight
+        > 0 prefers recent memories (transparently — the component is in the
+        receipt). `as_of=N` recalls against the memory state at ordinal N
+        (point-in-time recall). Cross-session recall is `user=X, session=None`."""
+        rows = [{"id": r["id"], "text": r["text"], "layer": r["layer"],
+                 "ord": r["created_ord"], "content_sha256": r["content_sha256"]}
+                for r in self.store.memories(layer=layer or "L1", session=session,
+                                             user=user, as_of=as_of)]
+        return recall(query, rows, strategy=strategy, top_k=top_k,
+                      embedder=self.embedder, recency_weight=recency_weight,
+                      layer=layer or "L1", user=user, session=session, as_of=as_of)
+
+    # -- temporal ------------------------------------------------------------
+    def supersede(self, old_id: str, new_text: str, *, reason: str = "") -> dict | None:
+        """A fact CHANGED: create a new memory carrying `new_text` (grounded on
+        the old one) and close the old memory's validity, KEEPING it for history.
+        A forget erases the fact with its timeline; supersede preserves it. None
+        if `old_id` is absent or already superseded."""
+        old = self.store.memory(old_id)
+        if old is None or old["valid_until"] is not None:
+            return None
+        new_id = content_hash(old_id, new_text)[:16]
+        self.store.add_memory(new_id, "L1", new_text, [old_id], "supersede/v1",
+                              f"supersedes {old_id}", session=old["session"],
+                              user=old["user"])
+        entry = self.store.supersede(old_id, new_id, reason)
+        return {"new_id": new_id, "closed": old_id, "audit": entry}
+
+    def history(self, *, contains: str | None = None, predicate: str | None = None,
+                user: str | None = None) -> dict:
+        """The timeline of a fact (current + superseded), backed by the audit log.
+        Filter by `predicate` (e.g. 'lives_in') or `contains` (substring)."""
+        from .temporal import history
+        return history(self, contains=contains, predicate=predicate, user=user)
+
+    # -- accountability ------------------------------------------------------
+    def drift(self, layer: str | None = "L1") -> dict:
+        """Verdict every memory's grounding against the current store."""
+        return drift_report(self.store, layer=layer)
+
+    def provenance(self, memory_id: str) -> dict | None:
+        r = self.store.provenance(memory_id)
+        return r.as_dict() if r else None
+
+    # -- ecosystem composition ----------------------------------------------
+    def ingest_gather(self, session: str, items: list[dict], user: str = "") -> dict:
+        """Ingest accountable-intake items (gather's shape) into memory, binding
+        each item's origin receipt so the memory can be traced and explicitly
+        rechecked against supported local origins."""
+        from .ingest import from_gather
+        return from_gather(self, items, session, user=user)
+
+    def provenance_chain(self, memory_id: str) -> dict | None:
+        """The full re-checkable chain for a memory: atom -> source turn ->
+        origin receipt when one was supplied."""
+        from .ingest import provenance_chain
+        return provenance_chain(self, memory_id)
+
+    def recheck_local_origin(self, memory_id: str, *,
+                             allowed_root: str | Path,
+                             profile: str | None = None) -> dict:
+        """Opt-in external freshness check for supported local origin receipts.
+
+        This is separate from ``drift()``, which checks consistency inside the
+        Mneme store. The local-origin check re-reads only caller-approved local
+        files whose receipt profile is supported.
+        """
+        from .origin import GATHER_DOCS_FILE_READ_PROFILE, recheck_local_origins
+
+        return recheck_local_origins(
+            self,
+            memory_id,
+            allowed_root=allowed_root,
+            profile=profile or GATHER_DOCS_FILE_READ_PROFILE,
+        )
+
+    def to_crucible(self, session: str | None = None, layer: str = "L1",
+                    user: str | None = None) -> dict:
+        """Export memories as a crucible thesis + drift-derived measurements, so
+        an independent judgment organ can certify the memory's faithfulness."""
+        from .compose import to_crucible_thesis
+        return to_crucible_thesis(self, session, layer, user=user)
+
+    def replay_crucible(self, template: dict) -> dict:
+        """Replay against an instance opened with both safety flags enabled.
+
+        Construct with ``read_only=True, immutable_snapshot=True`` so Store
+        materializes and owns the private SQLite snapshot used for the replay.
+        """
+        if not (self.store.read_only and self.store.immutable_snapshot):
+            raise ValueError(
+                "Crucible replay requires AgentMemory(..., read_only=True, "
+                "immutable_snapshot=True)"
+            )
+        from .replay import replay_crucible
+        return replay_crucible(self.store, template)
+
+    def consolidate(self, session: str | None = None, *, dup_threshold: float = 0.6,
+                    apply: bool = True, user: str | None = None) -> dict:
+        """Merge near-duplicate memories (audit-tombstoned) and surface
+        contradiction candidates without auto-resolving them. Never merges or
+        contradicts across users, even when `user` is None (all tenants)."""
+        from .consolidate import consolidate
+        return consolidate(self, session, dup_threshold=dup_threshold, apply=apply,
+                           user=user)
+
+    def entity_graph(self, *, user: str | None = None, session: str | None = None) -> dict:
+        """Build a grounded entity graph (typed relations + named entities) over
+        the scoped memories; every edge cites its source atom (drift-checkable)."""
+        from .entity import entity_graph
+        return entity_graph(self, user=user, session=session)
+
+    # -- accountable editing -------------------------------------------------
+    def forget(self, memory_id: str, reason: str = "", *, include_sources: bool = True,
+               allow_collateral: bool = False) -> dict | None:
+        """Erase a memory, its source turns and everything derived from them, and
+        return the erase receipt (see erase.py). Raises CollateralError with the
+        plan when other memories share a source turn, unless allow_collateral.
+        include_sources=False keeps the source turns. None if the memory is absent."""
+        from .erase import forget_memory
+        return forget_memory(self.store, memory_id, reason, include_sources=include_sources,
+                             allow_collateral=allow_collateral)
+
+    def update(self, memory_id: str, new_text: str, reason: str = "") -> dict | None:
+        """Edit a memory's text, keeping its provenance and recording the
+        blinded before/after values in the audit log. None if the memory is absent."""
+        return self.store.update(memory_id, new_text, reason)
+
+    def audit(self) -> dict:
+        """The append-only, hash-chained history of every erase, forget, update
+        and supersede, with a
+        verify verdict. What was known and when it changed is re-checkable."""
+        rows = self.store.audit_log()
+        return {"schema": "mneme.audit/1", "entries": len(rows),
+                "chain_intact": self.store.verify_audit(),
+                "log": [{"op": r["op"], "memory_id": r["memory_id"],
+                         "layer": r["layer"], "before_sha": r["before_sha"],
+                         "after_sha": r["after_sha"], "reason": r["reason"],
+                         "entry_sha": r["entry_sha"]} for r in rows]}
+
+    # -- scenarios (L2) ------------------------------------------------------
+    def build_scenarios(self, session: str, *, min_shared: int = 1,
+                        user: str = "") -> dict:
+        """Cluster this session's atoms into L2 scenarios (scene blocks), each
+        citing its member atoms so it stays drift-checkable. Deterministic.
+        Scoped to one `user` (default the shared "" tenant): the L1 read and the
+        L2 write stay inside the partition, never aggregating across tenants."""
+        from .scenario import cluster_atoms
+
+        atoms = [{"id": a["id"], "text": a["text"]}
+                 for a in self.store.memories(layer="L1", session=session, user=user)]
+        scenarios = cluster_atoms(atoms, min_shared=min_shared)
+        out = []
+        for sc in scenarios:
+            self.store.add_memory(sc.id, "L2", sc.text, sc.atom_ids, "cluster/v1",
+                                  "atoms sharing a theme", session=session, user=user)
+            out.append({"scenario_id": sc.id, "atoms": len(sc.atom_ids),
+                        "theme": list(sc.theme)})
+        return {"session": session, "user": user, "scenarios": len(out), "blocks": out}
+
+    # -- persona (L3) --------------------------------------------------------
+    def persona(self, session: str, user: str = "") -> dict:
+        """Synthesize a persona from this session's atoms. Deterministic floor:
+        the atoms grouped, with each line bound to its source atom ids (so the
+        persona is itself drift-checkable — L3 cites L2/L1, never free text).
+        Scoped to one `user` (default the shared "" tenant): a persona is built
+        from and stored under a single partition, never merged across tenants."""
+        atoms = self.store.memories(layer="L1", session=session, user=user)
+        lines = [a["text"] for a in atoms]
+        source_ids = [a["id"] for a in atoms]
+        text = "\n".join(f"- {ln}" for ln in lines)
+        pid = content_hash(session, user, "persona", text)[:16]
+        if lines:
+            self.store.add_memory(pid, "L3", text, source_ids, "persona/v1",
+                                  "profile synthesized from atoms", session=session,
+                                  user=user)
+        return {"session": session, "user": user, "persona_id": pid if lines else None,
+                "facts": len(lines), "text": text,
+                "grounded_in": source_ids,
+                "note": "persona cites its source atoms -> it is drift-checkable, not free text"}
+
+    def close(self) -> str | None:
+        return self.store.close()

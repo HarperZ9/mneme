@@ -1,0 +1,23 @@
+{
+  "author": {
+    "name": "Zain Dana Harper"
+  },
+  "description": "Mneme local tools with explicit operator bindings.",
+  "license": "FSL-1.1-MIT",
+  "name": "mneme-local",
+  "userConfig": {
+    "memory_write": {
+      "default": false,
+      "description": "Grant memory storage, recall, drift, provenance, audit, replay and planned two-step forgetting for the selected database.",
+      "title": "Allow memory changes",
+      "type": "boolean"
+    },
+    "state": {
+      "description": "Absolute SQLite file path with an existing parent folder. This does not grant memory changes.",
+      "required": true,
+      "title": "Mneme SQLite file",
+      "type": "file"
+    }
+  },
+  "version": "0.6.0"
+}

@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "mneme": {
+      "args": [
+        "-I",
+        "-S",
+        "-B",
+        "${PLUGIN_ROOT}/server/serve.py"
+      ],
+      "command": "python3",
+      "env": {
+        "MNEME_STATE": "${MNEME_STATE}"
+      },
+      "type": "stdio"
+    }
+  }
+}

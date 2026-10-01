@@ -1,0 +1,14 @@
+{
+  "description": "Mneme local tools with explicit operator bindings.",
+  "name": "mneme-local",
+  "owner": {
+    "name": "Zain Dana Harper"
+  },
+  "plugins": [
+    {
+      "description": "Mneme local tools with explicit operator bindings.",
+      "name": "mneme-local",
+      "source": "./"
+    }
+  ]
+}
