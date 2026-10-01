@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0 - unreleased
+
+- Adds portable, Claude and Codex client manifests, a scoped skill, privacy guidance and troubleshooting.
+- Adds deterministic source plugin ZIPs and self-contained Windows x64 ZIP/MCPB candidates with runtime licenses, checksums and dependency provenance. Source ZIPs still require Python.
+- Requires an explicit absolute MNEME_STATE binding. The default bound export profile exposes status, doctor, origin recheck and Crucible export. Full memory access requires --allow-memory-write at process launch. Synthetic source tests cover remember and recall with that grant; granted native persistence still requires isolated OS-user acceptance because Windows snapshot cleanup uses the Known Folder location.
+- Adds clean, tag-bound release packaging for .0 versions. Linked inputs, untracked release payloads, state files and credential file types are refused. The release workflow attaches checked client packages alongside the product release.
+- Real Windows stdio checks cover identity, source/version parity, discovery and permission refusals without a model account. Installed-client compatibility, clean-OS compatibility, signing and marketplace admission remain open gates. No publisher backend, model, network listener or service is installed.
+
 ## 0.5.1 (2026-09-26)
 
 Fixes to the 0.5.0 forget. The items marked Security or Privacy close gaps in

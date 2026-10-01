@@ -503,3 +503,7 @@ The long form of this belief: [The Unbundling](https://github.com/HarperZ9/flywh
 ---
 
 **[Zentropy Labs](https://github.com/ZentropyLabs-ai)** · order out of entropy. An independent lab building evidence-first tools that leave a re-checkable artifact behind. Built by Zain Dana Harper in Seattle. The full workbench is at [Project Telos](https://harperz9.github.io).
+
+## 0.6.0 local client distribution candidate
+
+The additional [client package](client-plugin/README.md) includes portable plugin metadata and a Windows x64 MCPB/ZIP build. The source version is 0.6.0; these client packages remain unpublished candidates. Existing release installation commands above retain their released version. Native packages carry their Python runtime. No publisher backend is required.

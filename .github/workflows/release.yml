@@ -84,7 +84,7 @@ jobs:
           path: dist/
 
   publish:
-    needs: build
+    needs: [build, client-packages]
     # Stays skipped until the trusted publisher exists and PYPI_ENABLED is 'true',
     # so a tag builds and smokes without a failing publish run beforehand.
     if: ${{ vars.PYPI_ENABLED == 'true' }}
@@ -105,3 +105,45 @@ jobs:
           # A second run for the same version (tag push, then Release) finds the
           # files already uploaded and finishes instead of failing.
           skip-existing: true
+
+  client-packages:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b
+        with:
+          python-version: "3.12"
+      - name: Install isolated build tools
+        run: python -m pip install pytest pyinstaller==6.21.0
+      - name: Verify package and product workflows
+        run: python -m pytest -q -o pythonpath=src
+      - name: Build tag-bound source and Windows client packages
+        shell: pwsh
+        run: |
+          python scripts/build_client_package.py "$env:RUNNER_TEMP/client-source" --mode release
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python scripts/build_client_package.py "$env:RUNNER_TEMP/client-native" --native --mode release
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: client-packages
+          path: |
+            ${{ runner.temp }}/client-source/*.zip
+            ${{ runner.temp }}/client-source/SHA256SUMS
+            ${{ runner.temp }}/client-native/*.zip
+            ${{ runner.temp }}/client-native/*.mcpb
+            ${{ runner.temp }}/client-native/SHA256SUMS
+      - name: Attach checked packages to the published product release
+        if: github.event_name == 'release' && github.event.action == 'published'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          Copy-Item "$env:RUNNER_TEMP/client-source/SHA256SUMS" "$env:RUNNER_TEMP/client-source/SOURCE-SHA256SUMS"
+          Copy-Item "$env:RUNNER_TEMP/client-native/SHA256SUMS" "$env:RUNNER_TEMP/client-native/WINDOWS-SHA256SUMS"
+          $assets = @(Get-ChildItem "$env:RUNNER_TEMP/client-source/*.zip", "$env:RUNNER_TEMP/client-source/SOURCE-SHA256SUMS", "$env:RUNNER_TEMP/client-native/*.zip", "$env:RUNNER_TEMP/client-native/*.mcpb", "$env:RUNNER_TEMP/client-native/WINDOWS-SHA256SUMS" | ForEach-Object FullName)
+          gh release upload "$env:RELEASE_TAG" @assets
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
