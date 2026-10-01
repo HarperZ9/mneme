@@ -85,6 +85,10 @@ def manifests(version, native):
             manifest['user_config'] = {'local_path': {'type': 'directory' if TOOL == 'relay' else 'file',
                 'title': 'Launch root' if TOOL == 'relay' else 'Mneme state database',
                 'description': f'Explicit absolute local path for {binding}.', 'required': True}}
+        manifest['user_config']['memory_write'] = {'type': 'boolean', 'title': 'Allow memory changes',
+            'description': 'Enable memory storage, recall, replay and two-step forgetting in the selected database. Some reads can initialize or migrate state.',
+            'default': False, 'required': False}
+        mcp['args'] = ['--memory-write=${user_config.memory_write}']
         files['manifest.json'] = encoded(manifest)
     return files
 

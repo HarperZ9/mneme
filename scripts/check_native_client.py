@@ -56,7 +56,15 @@ def check(executable, version):
         bad=subprocess.run([str(executable),'--grant-all'],capture_output=True,env=env,cwd=temp,timeout=45)
         if not bad.returncode or bad.stdout:
             raise ValueError('unknown launch argument accepted')
-    return {'status':'PASS','version':version,'executable_sha256':hashlib.sha256(Path(executable).read_bytes()).hexdigest(),
+        from check_native_workflow import check_workflow
+        from check_mcpb_setup import check_setup, expanded_args
+        from build_client_package import manifests
+        manifest = json.loads(manifests(version, True)['manifest.json'])
+        setup = check_setup(executable, manifest, TOOL, env, temp)
+        setup_args = {key: expanded_args(manifest, **{key: True})
+                      for key in (['memory_write'] if TOOL == 'mneme' else ['write', 'exec'])}
+        workflow = check_workflow(executable, Path(temp), env, setup_args)
+    return {'mcpb_setup':setup,'workflow':workflow,'status':'PASS','version':version,'executable_sha256':hashlib.sha256(Path(executable).read_bytes()).hexdigest(),
             'scope':'identity, tool list, unknown tool, default permission refusal',
             'does_not_prove':['model workflow','installed client compatibility','clean OS compatibility']}
 

@@ -51,9 +51,18 @@ def mneme_serve(writable):
                 content = response['result']['content'][0]
                 info = json.loads(content['text'])
                 info['client_grants'] = {'memory_write': writable,
-                    'profile': 'memory' if writable else 'bound_export'}
+                    'profile': 'memory' if writable else 'bound_export',
+                    'snapshot_scope': 'selected state sibling namespace',
+                    'legacy_global_snapshots': 'not inspected or modified'}
                 if not writable and 'tools' in info:
                     info['tools'] = [name for name in info['tools'] if name in safe]
+                content['text'] = json.dumps(info)
+            if response and req.get('method') == 'tools/call' and params.get('name') == 'mneme.forget' and not response.get('error') and not response['result'].get('isError'):
+                content = response['result']['content'][0]
+                info = json.loads(content['text'])
+                info['client_snapshot_scope'] = {
+                    'managed': 'selected state sibling namespace',
+                    'legacy_global_snapshots': 'not inspected or modified'}
                 content['text'] = json.dumps(info)
         except (ValueError, TypeError, AttributeError) as exc:
             response = mcp._err(None, -32600, str(exc))
@@ -66,6 +75,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser()
     if TOOL == 'mneme':
         parser.add_argument('--allow-memory-write', action='store_true')
+        parser.add_argument('--memory-write', choices=('true', 'false'), default='false')
     if TOOL == 'relay':
         parser.add_argument('--allow-write', action='store_true')
         parser.add_argument('--allow-exec', action='store_true')
@@ -73,7 +83,9 @@ def main(argv=None):
     try:
         if TOOL == 'mneme':
             os.environ['MNEME_STATE'] = explicit_path(os.environ.get('MNEME_STATE'))
-            return mneme_serve(args.allow_memory_write)
+            from mneme.snapshot_binding import for_state
+            with for_state(os.environ['MNEME_STATE']):
+                return mneme_serve(args.allow_memory_write or args.memory_write == 'true')
         if TOOL == 'relay':
             root = explicit_path(os.environ.get('RELAY_MCP_ROOT'), directory=True)
             from relay.local_mcp import serve

@@ -41,6 +41,7 @@ from .audit_writer import meta_get, meta_set
 from .os_facts import known_local_appdata as _known_local_appdata
 from .os_facts import pid_alive as _pid_alive
 from .schema import META_STORE_ID
+from .snapshot_binding import bound_root, check_bound_path
 
 STORE_ID_PATTERN = r"st_[0-9a-f]{32}"
 SNAPSHOT_GLOB = "mneme-replay-*.db"
@@ -92,7 +93,7 @@ def platform_snapshot_root(*, system: str | None = None) -> Path:
 
 
 def snapshot_root() -> Path:
-    return platform_snapshot_root()
+    return bound_root() or platform_snapshot_root()
 
 
 def _path_key(path: Path) -> str:
@@ -120,6 +121,7 @@ def _private_dir(path: Path) -> Path:
     root = snapshot_root()
     if root not in path.parents:
         raise OSError("snapshot directory is outside the snapshot root")
+    check_bound_path(path)
     path.mkdir(parents=True, exist_ok=True)
     for part in [path, *path.parents]:
         if part == root.parent:
@@ -167,6 +169,7 @@ def _remove_with_sidecars(path: Path) -> bool:
 def _snapshot_files(directory: Path) -> list[Path]:
     """Regular files named like a snapshot. A missing directory is empty; one
     that cannot be listed raises (Path.glob would read it as empty)."""
+    check_bound_path(directory)
     try:
         entries = list(os.scandir(directory))
     except (FileNotFoundError, NotADirectoryError):
@@ -177,10 +180,12 @@ def _snapshot_files(directory: Path) -> list[Path]:
 
 
 def _store_dirs(root: Path) -> list[Path]:
+    check_bound_path(root)
     if not root.is_dir():
         return []
     dirs = [d for d in root.iterdir() if d.is_dir() and valid_store_id(d.name)]
     unkeyed = root / "unkeyed"
+    check_bound_path(unkeyed)
     if unkeyed.is_dir():
         dirs += [d for d in unkeyed.iterdir() if d.is_dir()]
     return dirs
@@ -276,4 +281,6 @@ def other_snapshots(store_id: str | None, source_path: Path | None) -> list[Path
 
 def legacy_temp_snapshots() -> list[Path]:
     """Snapshots that mneme before 0.5.0 left in the OS temp directory."""
+    if bound_root() is not None:
+        return []  # A bound client has no authority over the shared legacy store.
     return _snapshot_files(Path(tempfile.gettempdir()))
