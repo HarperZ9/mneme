@@ -1,5 +1,15 @@
 # Mneme client package
 
+Mneme gives your assistant a local memory in a SQLite file you choose. Every recalled memory carries its provenance, and memory changes stay off until you allow them.
+
+## Try it
+
+- Check Mneme's status and which database it is bound to.
+- Export the memories from my planning session as Crucible claims.
+- Re-check whether that memory still matches its source file.
+
+## Details
+
 Set MNEME_STATE to an absolute SQLite file path whose parent exists. No working-directory fallback is accepted. The default adapter offers status, doctor, local origin recheck and declarative Crucible export. Add --allow-memory-write only after approving remember, recall, drift, provenance, audit, replay and two-step forget access: legacy reads can initialize/migrate state, and replay/forget manage local snapshots. The user selector is not authentication.
 
 Client snapshots stay in a `.mneme-snapshots-<state-path-hash>` directory beside the selected database. The client neither inspects nor cleans the legacy global snapshot directories or shared temporary snapshots. Forget receipts retain `copies_unchecked` for those locations even after the selected memory is removed. CLI snapshot defaults are unchanged; review legacy copies through that workflow separately. Path checks refuse links but do not provide an OS sandbox or protect against concurrent filesystem changes by another process.

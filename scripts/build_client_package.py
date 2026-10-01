@@ -15,6 +15,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = 'mneme'
+DESCRIPTION = 'Local memory in a SQLite file you choose, with provenance on every recalled memory.'
 
 
 def entries(root, extensions=frozenset({'.py', '.md', '.json'})):
@@ -70,7 +71,7 @@ def manifests(version, native):
     env = {binding: '${' + binding + '}'} if binding else {}
     config = {'mcpServers': {TOOL: {'command': command, 'args': args, 'env': env, 'type': 'stdio'}}}
     plugin = {'name': TOOL + '-local', 'version': version,
-              'description': f'{TOOL.title()} local tools with explicit operator bindings.',
+              'description': DESCRIPTION,
               'author': {'name': 'Zain Dana Harper'}, 'license': 'FSL-1.1-MIT'}
     files = {'plugin.json': encoded(plugin), '.claude-plugin/plugin.json': encoded(plugin),
              '.codex-plugin/plugin.json': encoded({**plugin, 'skills': './skills/', 'mcpServers': './mcp.json'}),
