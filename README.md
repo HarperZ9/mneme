@@ -8,7 +8,7 @@
 
 ## Install
 
-### Release wheel
+### Released v0.6.0 wheel
 
 The wheel provides memory, recall, drift, provenance, local-origin freshness, and MCP Crucible export/replay workflows. Forget removes a memory's raw turns and rows derived from them in the store, with a receipt naming what it cannot reach (see [Accountable forgetting](#accountable-forgetting)). Version 0.6.0 adds self-contained Windows client packages with explicit memory permissions and state-bound snapshots. The [CHANGELOG](CHANGELOG.md) lists the changes.
 
