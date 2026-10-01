@@ -105,6 +105,17 @@ def archive(files, target):
             archive.writestr(info, data)
 
 
+def write_sums(target, paths):
+    """Write sha256sum lines for paths to target with LF endings on every OS.
+
+    Path.write_text turns each newline into CRLF on Windows. GNU sha256sum 8.32
+    and Perl shasum then read the file name with a trailing carriage return and
+    fail to open it, so the bytes are written directly.
+    """
+    lines = ''.join(f'{hashlib.sha256(Path(p).read_bytes()).hexdigest()}  {Path(p).name}\n' for p in paths)
+    Path(target).write_bytes(lines.encode('utf-8'))
+
+
 def build(output, native=False, mode='dev'):
     version, head = qualify(mode)
     output = Path(output).absolute()
@@ -173,7 +184,7 @@ def build(output, native=False, mode='dev'):
     artifacts = [output / (name + suffix) for suffix in (('.zip', '.mcpb') if native else ('.zip',))]
     for target in artifacts:
         archive(files, target)
-    (output / 'SHA256SUMS').write_text(''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n' for p in artifacts))
+    write_sums(output / 'SHA256SUMS', artifacts)
     (output / 'build-receipt.json').write_bytes(encoded(receipt))
     return artifacts
 
