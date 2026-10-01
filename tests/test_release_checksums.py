@@ -8,7 +8,6 @@ import hashlib
 import importlib
 from pathlib import Path
 import re
-import sys
 
 import pytest
 
