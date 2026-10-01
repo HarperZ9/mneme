@@ -142,6 +142,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
+          foreach ($sums in "$env:RUNNER_TEMP/client-source/SHA256SUMS", "$env:RUNNER_TEMP/client-native/SHA256SUMS") {
+            # A CR byte passes coreutils 9 but fails sha256sum 8.32 and shasum.
+            if ([IO.File]::ReadAllBytes($sums) -contains 13) { Write-Error "$sums has CR bytes"; exit 1 }
+          }
           Copy-Item "$env:RUNNER_TEMP/client-source/SHA256SUMS" "$env:RUNNER_TEMP/client-source/SOURCE-SHA256SUMS"
           Copy-Item "$env:RUNNER_TEMP/client-native/SHA256SUMS" "$env:RUNNER_TEMP/client-native/WINDOWS-SHA256SUMS"
           $assets = @(Get-ChildItem "$env:RUNNER_TEMP/client-source/*.zip", "$env:RUNNER_TEMP/client-source/SOURCE-SHA256SUMS", "$env:RUNNER_TEMP/client-native/*.zip", "$env:RUNNER_TEMP/client-native/*.mcpb", "$env:RUNNER_TEMP/client-native/WINDOWS-SHA256SUMS" | ForEach-Object FullName)
