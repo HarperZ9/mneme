@@ -60,7 +60,39 @@ def _text(text: str, *, is_error: bool = False) -> dict:
     return {"content": [{"type": "text", "text": text}], "isError": is_error}
 
 
+def _hints(title: str, *, read_only: bool = True, destructive: bool = False,
+           idempotent: bool = True) -> dict:
+    return {"title": title, "readOnlyHint": read_only, "destructiveHint": destructive,
+            "idempotentHint": idempotent, "openWorldHint": False}
+
+
+# MCP tool annotations. A hint describes the tool to the client and grants
+# nothing; the memory-write launch grant still decides which tools run.
+TOOL_ANNOTATIONS = {
+    "mneme.remember": _hints("Remember conversation turns", read_only=False),
+    "mneme.recall": _hints("Recall memories with a receipt"),
+    "mneme.drift": _hints("Check memories for drift"),
+    "mneme.to_crucible": _hints("Export memories for Crucible"),
+    "mneme.replay_crucible": _hints("Replay a Crucible template", read_only=False),
+    "mneme.provenance": _hints("Show a memory's provenance"),
+    "mneme.origin_recheck": _hints("Re-check a memory's local origin"),
+    "mneme.forget": _hints("Plan or confirm forgetting a memory", read_only=False,
+                           destructive=True, idempotent=False),
+    "mneme.audit": _hints("Memory change history"),
+    "mneme.status": _hints("Mneme status"),
+    "mneme.doctor": _hints("Mneme readiness check"),
+}
+
+
 def _tool_defs() -> list[dict]:
+    tools = []
+    for tool in _raw_tool_defs():
+        notes = dict(TOOL_ANNOTATIONS[tool["name"]])
+        tools.append({**tool, "title": notes["title"], "annotations": notes})
+    return tools
+
+
+def _raw_tool_defs() -> list[dict]:
     return [
         {"name": "mneme.remember",
          "description": "Record conversation turns (L0) and extract atomic facts "
