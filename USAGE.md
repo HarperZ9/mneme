@@ -84,3 +84,7 @@ Descriptors remain declarative: no executable commands, host state paths, or dat
 ## Limits
 
 Origin rechecks are opt-in and profile-bound. Supported Gather docs or file-read receipts compare normalized decoded text; Mneme does not fetch network origins or prove raw-byte integrity for those receipts. Crucible replay verifies Mneme's sealed measurements and does not independently read external sources. A forget reaches the database file and its replay snapshots, and scans other snapshots it can find; it does not reach exports, backups, copies of the file made elsewhere, text already sent to a model provider through an LLM extractor, an embedder or an MCP client, or the results an MCP client keeps in its own session history.
+
+## 0.6.0 client distribution candidate
+
+The new local client adapter requires an explicit state binding and launch-time approval for full memory access. See [client installation and permissions](client-plugin/README.md). The existing 0.5.1 memory behavior is retained; this source candidate is not published.

@@ -24,6 +24,7 @@ from pathlib import Path
 
 from . import snapshot_dir
 from .erase_scan import scan_paths
+from .snapshot_binding import bound_root
 
 MAX_COPY_BYTES = 1 << 30
 
@@ -40,6 +41,9 @@ def _scanned(item: dict, paths, texts, kept) -> dict:
 
 
 def _legacy_temp(texts, kept) -> dict:
+    if bound_root() is not None:
+        return {"class": "legacy_temp_snapshots", "count": None, "not_scanned": 1,
+                "note": "outside this client's selected snapshot authority; not inspected or modified"}
     item = {"class": "legacy_temp_snapshots",
             "note": "replay snapshots that mneme before 0.5.0 left in the OS temp "
                     "directory; they cannot be tied to one store, so they are "
@@ -81,8 +85,12 @@ def named_only() -> list[dict]:
 
 
 def out_of_reach(store_id, db: Path | None, texts, kept) -> list[dict]:
-    return [*named_only(), _legacy_temp(texts, kept),
-            _other_snapshots(store_id, db, texts, kept)]
+    items = [*named_only(), _legacy_temp(texts, kept),
+             _other_snapshots(store_id, db, texts, kept)]
+    if bound_root() is not None:
+        items.append({"class": "global_snapshots", "count": None, "not_scanned": 1,
+                      "note": "legacy global snapshot directories are outside this client's authority"})
+    return items
 
 
 def copies_found(items: list[dict]) -> tuple[int, int]:

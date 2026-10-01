@@ -8,9 +8,9 @@
 
 ## Install
 
-### Released v0.5.1 wheel
+### Released v0.6.0 wheel
 
-The public `v0.5.1` wheel is the current released package. It covers the released memory, recall, drift, provenance, local-origin freshness, and MCP Crucible export/replay workflows documented below, a forget that erases a memory's raw turns and every row derived from them in the store, with a receipt that names what it cannot reach (see [Accountable forgetting](#accountable-forgetting)), and `mneme status` and `mneme doctor`. 0.5.1 fixes security and privacy gaps in the 0.5.0 forget; if you erase data with 0.5.0, upgrade. The [CHANGELOG](CHANGELOG.md) lists each fix.
+The wheel provides memory, recall, drift, provenance, local-origin freshness, and MCP Crucible export/replay workflows. Forget removes a memory's raw turns and rows derived from them in the store, with a receipt naming what it cannot reach (see [Accountable forgetting](#accountable-forgetting)). Version 0.6.0 adds self-contained Windows client packages with explicit memory permissions and state-bound snapshots. The [CHANGELOG](CHANGELOG.md) lists the changes.
 
 ```bash
 python -m pip install flywheel-mneme
@@ -21,7 +21,7 @@ python -m pip install flywheel-mneme
 To check the bytes yourself rather than trust the index, install the release wheel directly:
 
 ```bash
-python -m pip install "https://github.com/HarperZ9/mneme/releases/download/v0.5.1/flywheel_mneme-0.5.1-py3-none-any.whl"
+python -m pip install "https://github.com/HarperZ9/mneme/releases/download/v0.6.0/flywheel_mneme-0.6.0-py3-none-any.whl"
 ```
 
 ### Source install
@@ -398,7 +398,7 @@ memory cites, and `mneme forget <turn_id> --turn` erases such a turn.
 mneme mcp          # JSON-RPC 2.0 over stdio; MNEME_STATE points at the DB
 ```
 
-The released `v0.5.1` wheel exposes the MCP memory, recall, drift, provenance, origin recheck, forget, audit, status, doctor, Crucible export, and Crucible replay tools.
+The wheel exposes the MCP memory, recall, drift, provenance, origin recheck, forget, audit, status, doctor, Crucible export, and Crucible replay tools. The client package starts with the restricted export profile; its memory-change setup option grants the full memory workflow.
 
 From 0.5.0, `mneme.forget` takes two steps. A call with only `memory_id` returns
 the plan (targets, row ids and counts, the number of users but not their names,
@@ -503,3 +503,7 @@ The long form of this belief: [The Unbundling](https://github.com/HarperZ9/flywh
 ---
 
 **[Zentropy Labs](https://github.com/ZentropyLabs-ai)** · order out of entropy. An independent lab building evidence-first tools that leave a re-checkable artifact behind. Built by Zain Dana Harper in Seattle. The full workbench is at [Project Telos](https://harperz9.github.io).
+
+## 0.6.0 local client distribution candidate
+
+The additional [client package](client-plugin/README.md) includes portable plugin metadata and a Windows x64 MCPB/ZIP build. The source version is 0.6.0; these client packages remain unpublished candidates. Existing release installation commands above retain their released version. Native packages carry their Python runtime. No publisher backend is required.

@@ -1,0 +1,11 @@
+{
+  "author": {
+    "name": "Zain Dana Harper"
+  },
+  "description": "Mneme local tools with explicit operator bindings.",
+  "license": "FSL-1.1-MIT",
+  "mcpServers": "./mcp.json",
+  "name": "mneme-local",
+  "skills": "./skills/",
+  "version": "0.6.0"
+}
