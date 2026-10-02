@@ -298,7 +298,7 @@ def test_environment_reads_are_the_ones_the_disclosure_names(packaged, tmp_path)
     assert p.returncode == 0, p.stderr
     seen = set(json.loads(p.stdout.strip().splitlines()[-1].replace("'", '"')))
     named = {'MNEME_STATE', 'COLUMNS', 'LINES', 'LANG', 'LANGUAGE', 'LC_ALL', 'LC_MESSAGES',
-             'USERPROFILE', 'HOMEPATH', 'HOME'}
+             'USERPROFILE', 'HOMEPATH', 'HOME', 'APPDATA', 'PYTHONUSERBASE', '_PYTHON_PROJECT_BASE'}
     assert 'MNEME_STATE' in seen and seen <= named, seen - named
     section = _disclosure('README.md')
     assert all(f'`{name}`' in section for name in named)
