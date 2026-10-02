@@ -24,7 +24,7 @@ It also sets the environment variable `MNEME_STATE` to `${user_config.state_path
 - With `true`, it also offers remember, recall, drift, provenance, audit, replay and forget.
 - `-I -S -B` start Python in isolated mode. Python then ignores its own environment variables and the user's site packages, and writes no bytecode cache files.
 
-**Network.** The server opens no network connection. Its code opens no socket, makes no web request and starts no other program. It talks to Claude Code only through standard input and output. Mneme's library has an optional model-based extractor that can call a model endpoint. The plugin server never loads it.
+**Network.** The server opens no network connection. Its code opens no socket, makes no web request and starts no other program. It talks to Claude Code only through standard input and output. Mneme's library has an optional model-based extractor that can call a model endpoint. It is not shipped in this plugin folder.
 
 **Files read.**
 
@@ -53,7 +53,7 @@ Python's standard library reads these on Mneme's behalf:
 - `USERPROFILE` on Windows, or `HOMEPATH` when `USERPROFILE` is not set: the doctor tool finds your home folder so it can show it as `~` in the paths it reports. On Linux and macOS the same step reads `HOME`.
 - `APPDATA`, `PYTHONUSERBASE` and `_PYTHON_PROJECT_BASE`: on Windows, the doctor tool also asks Windows for the short form of your home folder path through Python's `ctypes` library. In Python 3.13.14, loading `ctypes` loads Python's build settings module, and that module reads these three. Python 3.12.10 and 3.13.2 do not read them.
 
-Nothing else is read. `XDG_STATE_HOME` appears in Mneme's snapshot code, but only the command-line tool on Linux and macOS uses it. The plugin server keeps snapshots beside your database and never reads it. The server reads no credential, API key or token. The optional model extractor reads `OPENAI_BASE_URL`, `OPENAI_MODEL` and `OPENAI_API_KEY`, and the plugin server never loads it.
+Nothing else is read. `XDG_STATE_HOME` appears in Mneme's snapshot code, but only the command-line tool on Linux and macOS uses it. The plugin server keeps snapshots beside your database and never reads it. The server reads no credential, API key or token. The plugin folder carries only the modules the server can import, so the command-line tool and the optional model extractor are not shipped in it.
 
 ## What it reads, stores and sends
 

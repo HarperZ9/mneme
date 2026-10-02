@@ -41,7 +41,20 @@ def entries(root, extensions=frozenset({'.py', '.md', '.json'})):
 
 
 VENDORED = 'server/src/'
+CRLF, LF = bytes([13, 10]), bytes([10])
 SYNC_COMMAND = 'python scripts/build_client_package.py --sync-vendored'
+
+
+def server_source(root=None):
+    """The package modules the client entry point can import, as {name: bytes}.
+
+    One definition for both the source ZIP's server/src and the committed copy
+    in client-plugin. CLI-only modules and the optional model extractor stay out."""
+    from client_closure import closure
+    root = Path(root or ROOT)
+    source = entries(root / 'src' / TOOL)
+    keep = closure(root / 'src' / TOOL, TOOL, root / 'client-plugin' / 'server' / 'serve.py')
+    return {name: data for name, data in source.items() if name in keep}
 
 
 def vendored_files(root=None):
@@ -49,8 +62,7 @@ def vendored_files(root=None):
 
     The same selection and bytes the source ZIP puts under server/src, with CRLF
     normalized to LF so a Windows checkout and a Linux checkout agree."""
-    source = entries(Path(root or ROOT) / 'src' / TOOL)
-    return {f'{VENDORED}{TOOL}/{name}': data.replace(b'\r\n', b'\n') for name, data in source.items()}
+    return {f'{VENDORED}{TOOL}/{name}': data.replace(CRLF, LF) for name, data in server_source(root).items()}
 
 
 def client_entries(root=None):
@@ -232,7 +244,7 @@ def build(output, native=False, mode='dev'):
             raise ValueError('missing PyInstaller license')
         files['PYINSTALLER-LICENSE.txt'] = copying[0].read_bytes()
     else:
-        files.update({f'server/src/{TOOL}/{name}': data for name, data in source.items()})
+        files.update({f'server/src/{TOOL}/{name}': data for name, data in server_source().items()})
     if any((ROOT / name).read_bytes() != data for name, data in inputs.items()):
         raise ValueError('source changed during build')
     files['QUALIFICATION.json'] = encoded(receipt)

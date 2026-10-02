@@ -42,7 +42,7 @@ def test_builder_scan_leaves_the_vendored_copy_out():
     assert not any(name.startswith(VENDORED) for name in client_entries())
 
 
-def _launch(plugin_root, tmp_path, write='false'):
+def _launch(plugin_root, tmp_path, write='false', calls=()):
     server = json.loads((plugin_root / '.mcp.json').read_text())['mcpServers']['mneme']
     values = {'${CLAUDE_PLUGIN_ROOT}': str(plugin_root), '${user_config.memory_write}': write,
               '${user_config.state_path}': str(tmp_path / 'state.db')}
@@ -58,6 +58,8 @@ def _launch(plugin_root, tmp_path, write='false'):
     env.update({k: fill(v) for k, v in server.get('env', {}).items()})
     requests = [{'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {}},
                 {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list', 'params': {}}]
+    requests += [{'jsonrpc': '2.0', 'id': i, 'method': 'tools/call', 'params': {'name': name, 'arguments': args}}
+                 for i, (name, args) in enumerate(calls, 3)]
     return subprocess.run([command, *[fill(a) for a in server['args']]], env=env, cwd=tmp_path,
                           input=''.join(json.dumps(r) + '\n' for r in requests),
                           capture_output=True, text=True, timeout=60)
@@ -99,3 +101,45 @@ def test_plugin_folder_fits_the_directory_limits():
 
 def test_no_gitattributes_inside_the_plugin_folder():
     assert not [p for p in PLUGIN.rglob('.gitattributes')]
+
+
+def test_vendored_code_holds_no_model_extractor_or_cli():
+    vendored = _vendored_on_disk()
+    assert not [n for n, data in vendored.items() if b'OPENAI_API_KEY' in data]
+    names = {n.rsplit('/', 1)[1] for n in vendored}
+    assert not names & {'llm_extract.py', 'cli.py', '__main__.py'}
+
+
+def _result(row):
+    assert 'error' not in row, row
+    return row['result']['content'][0]['text']
+
+
+def test_vendored_closure_serves_every_tool_from_the_folder_alone(tmp_path):
+    """A module missing from the trimmed copy shows up as an import error on the
+    tool path that needs it, so drive every tool, including both forget steps."""
+    plugin = _isolated_copy(tmp_path)
+    turns = [{'role': 'user', 'text': 'I live in Denver.'}, {'role': 'user', 'text': 'My dog is Juniper.'}]
+    first = _launch(plugin, tmp_path, 'true', [
+        ('mneme.remember', {'session': 's', 'turns': turns}), ('mneme.recall', {'query': 'Denver'})])
+    assert first.returncode == 0, first.stderr
+    rows = [json.loads(line) for line in first.stdout.splitlines()]
+    listed = {tool['name'] for tool in rows[1]['result']['tools']}
+    memory = json.loads(_result(rows[3]))['hits'][0]['memory_id']
+    plan = _launch(plugin, tmp_path, 'true', [('mneme.forget', {'memory_id': memory, 'reason': 'test'})])
+    digest = json.loads(_result([json.loads(x) for x in plan.stdout.splitlines()][2]))['plan_sha256']
+    calls = [('mneme.status', {}), ('mneme.doctor', {}), ('mneme.drift', {}), ('mneme.audit', {}),
+             ('mneme.provenance', {'memory_id': memory}), ('mneme.to_crucible', {'all_users': True}),
+             ('mneme.origin_recheck', {'memory_id': memory, 'allowed_root': str(tmp_path)}),
+             ('mneme.replay_crucible', {'template': {'schema': 'crucible.replay-template/1', 'replays': []}}),
+             ('mneme.forget', {'memory_id': memory, 'reason': 'test', 'confirm_plan_sha256': digest})]
+    assert {name for name, _ in calls} | {'mneme.remember', 'mneme.recall'} == listed
+    second = _launch(plugin, tmp_path, 'true', calls)
+    assert second.returncode == 0, second.stderr
+    out = first.stdout + plan.stdout + second.stdout
+    assert 'No module named' not in out and 'ImportError' not in out
+    texts = {name: _result(json.loads(line)) for (name, _), line in zip(calls, second.stdout.splitlines()[2:])}
+    receipt = json.loads(texts['mneme.forget'])
+    # The client reports legacy copies as unchecked, so the receipt says incomplete;
+    # the erase itself ran through every module it needs.
+    assert receipt['findings'] == ['copies_unchecked'] and receipt['structural']['rows_absent'] is True
