@@ -15,7 +15,7 @@ In Claude Code, enabling the plugin asks for the **Mneme state database**, an ab
 Client snapshots stay in a `.mneme-snapshots-<state-path-hash>` directory beside the selected database. The client neither inspects nor cleans the legacy global snapshot directories or shared temporary snapshots. Forget receipts retain `copies_unchecked` for those locations even after the selected memory is removed. CLI snapshot defaults are unchanged; review legacy copies through that workflow separately. Path checks refuse links but do not provide an OS sandbox or protect against concurrent filesystem changes by another process.
 
 ## Install
-The source ZIP requires Python 3.11 or newer. Extract the entire archive, then point a local stdio MCP client at an absolute Python executable with arguments `-I -S -B server/serve.py` using the absolute script path. Set the binding above in the client environment. The source package is an advanced installation, not self-contained.
+The plugin folder carries its own copy of the server code under `server/src`, so Claude Code needs only that folder and Python 3.11 or newer. If that copy is missing, the server stops with a message asking you to reinstall the plugin. The source ZIP holds the same files. Extract the entire archive, then point a local stdio MCP client at an absolute Python executable with arguments `-I -S -B server/serve.py` using the absolute script path. Set the binding above in the client environment. The source package is an advanced installation, not self-contained.
 
 The Windows x64 native ZIP includes Python and needs no separate Python or Node installation. Extract everything and use the absolute `server/mneme-local.exe` path with no arguments. A client supporting binary MCPB extensions may open the matching MCPB; enter its required local binding. Both archives use identical executable bytes.
 
@@ -41,6 +41,12 @@ It also sets the environment variable `MNEME_STATE` to `${user_config.state_path
 - `-I -S -B` start Python in isolated mode. Python then ignores its own environment variables and the user's site packages, and writes no bytecode cache files.
 
 **Network.** The server opens no network connection. Its code opens no socket, makes no web request and starts no other program. It talks to Claude Code only through standard input and output. Mneme's library has an optional model-based extractor that can call a model endpoint. The plugin server never loads it.
+
+**Files read.**
+
+- The state database you chose, and its SQLite sidecar files.
+- For `mneme.origin_recheck`, each local source file that a stored memory cites, inside the folder named in that call. A memory cites one file for each source turn that came from a local document. The folder comes from the tool call, so it can be any folder your account can read. Recheck reads each file to compare its hash and returns the result, not the file.
+- For `mneme.doctor`, whether each folder above the database contains a `.git` entry, to warn you when the database sits inside a Git work tree.
 
 **Files written.**
 

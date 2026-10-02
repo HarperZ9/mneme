@@ -40,6 +40,38 @@ def entries(root, extensions=frozenset({'.py', '.md', '.json'})):
     return result
 
 
+VENDORED = 'server/src/'
+SYNC_COMMAND = 'python scripts/build_client_package.py --sync-vendored'
+
+
+def vendored_files(root=None):
+    """The server code the plugin folder carries, keyed by its path inside client-plugin.
+
+    The same selection and bytes the source ZIP puts under server/src, with CRLF
+    normalized to LF so a Windows checkout and a Linux checkout agree."""
+    source = entries(Path(root or ROOT) / 'src' / TOOL)
+    return {f'{VENDORED}{TOOL}/{name}': data.replace(b'\r\n', b'\n') for name, data in source.items()}
+
+
+def client_entries(root=None):
+    """client-plugin inputs, leaving out the vendored copy the builder writes itself."""
+    files = entries(Path(root or ROOT) / 'client-plugin', CLIENT_EXTENSIONS)
+    return {name: data for name, data in files.items() if not name.startswith(VENDORED)}
+
+
+def sync_vendored(root=None):
+    """Rewrite client-plugin/server/src from src/, deleting stale files."""
+    target = Path(root or ROOT) / 'client-plugin' / VENDORED
+    expected = vendored_files(root)
+    if target.exists():
+        shutil.rmtree(target)
+    for name, data in expected.items():
+        path = target.parent.parent / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    return sorted(expected)
+
+
 def qualify(mode):
     project = tomllib.loads((ROOT / 'pyproject.toml').read_text())['project']
     version = project['version']
@@ -146,7 +178,7 @@ def build(output, native=False, mode='dev'):
     output = Path(output).absolute()
     if output.exists():
         raise FileExistsError('output must be a new directory')
-    files = entries(ROOT / 'client-plugin', CLIENT_EXTENSIONS)
+    files = client_entries()
     source = entries(ROOT / 'src' / TOOL)
     inputs = {f'src/{TOOL}/{name}': data for name, data in source.items()}
     inputs.update({f'client-plugin/{name}': data for name, data in files.items()})
@@ -216,9 +248,17 @@ def build(output, native=False, mode='dev'):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('output')
+    parser.add_argument('output', nargs='?')
     parser.add_argument('--native', action='store_true')
     parser.add_argument('--mode', choices=('dev', 'release'), default='dev')
+    parser.add_argument('--sync-vendored', action='store_true',
+                        help='rewrite client-plugin/server/src from src/ and exit')
     args = parser.parse_args()
+    if args.sync_vendored:
+        names = sync_vendored()
+        print(f'wrote {len(names)} files under client-plugin/{VENDORED}')
+        raise SystemExit(0)
+    if not args.output:
+        parser.error('output is required unless --sync-vendored is given')
     for item in build(args.output, args.native, args.mode):
         print(item)

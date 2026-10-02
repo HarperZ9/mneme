@@ -1,0 +1,79 @@
+"""temporal.py — memory with a timeline, backed by an auditable history.
+
+Mem0's largest benchmark gain is temporal reasoning: "where did the user live
+BEFORE Seattle". mneme answers it without guessing, because superseding a fact
+keeps the old one with a validity window (created_ord .. valid_until) instead of
+erasing it. The timeline of any fact is then a query, and every transition is in
+the hash-chained audit log — a memory history you can re-check, which no memory
+product carries.
+
+Two kinds of change, kept distinct on purpose:
+  - SUPERSEDE  a fact CHANGED: the old value is kept for history.
+  - FORGET     a fact is ERASED together with its source turns, everything
+               derived from it and its whole supersession history, so this
+               timeline never shows it again. The audit log keeps one
+               tombstone per erased row. The erase receipt names what can
+               still hold the text: a copy the erase did not reach (another
+               user's row, an earlier audit reason, a backup), which it
+               names, and counts where it can.
+
+`history(...)` returns the ordered timeline of matching memories with their
+validity windows; `as_of` (on recall/memories) reconstructs what was known at a
+point in time.
+"""
+from __future__ import annotations
+
+import re
+
+
+def _matches(row, contains: str | None, predicate: str | None) -> bool:
+    text = row["text"].lower()
+    if contains and contains.lower() not in text:
+        return False
+    if predicate:
+        from .entity import relations_in
+        preds = {r["predicate"] for r in relations_in(row["text"])}
+        if predicate not in preds:
+            return False
+    return True
+
+
+def history(memory, *, contains: str | None = None, predicate: str | None = None,
+            user: str | None = None) -> dict:
+    """The timeline of matching memories (current + superseded), oldest first,
+    each with its validity window and what superseded it. `predicate` filters by
+    entity relation (e.g. 'lives_in'); `contains` by substring."""
+    rows = memory.store.memories(user=user, include_superseded=True)
+    timeline = []
+    for r in rows:
+        if r["layer"] != "L1" or not _matches(r, contains, predicate):
+            continue
+        timeline.append({
+            "memory_id": r["id"], "text": r["text"], "user": r["user"],
+            "from_ord": r["created_ord"], "until_ord": r["valid_until"],
+            "current": r["valid_until"] is None,
+            "superseded_by": r["superseded_by"],
+        })
+    timeline.sort(key=lambda t: t["from_ord"])
+    # a single-subject answer must not span tenants: if the read was unscoped
+    # (user=None) and the timeline mixes >1 user, refuse the scalar current /
+    # transitions (honest null) rather than presenting one tenant's fact as THE
+    # current value. The timeline itself is attributed per entry.
+    spans_tenants = user is None and len({t["user"] for t in timeline}) > 1
+    note = ("every transition is also in the hash-chained audit log, so the "
+            "history is re-checkable. A forgotten fact is erased with its whole "
+            "timeline and never appears here; only superseded facts keep theirs.")
+    if spans_tenants:
+        note = ("timeline spans multiple users (user=None) — 'current' and "
+                "'transitions' are withheld (null) because a single-subject answer "
+                "cannot span tenants; scope with user= for a scalar. " + note)
+    return {
+        "schema": "mneme.history/1",
+        "filter": {"contains": contains, "predicate": predicate, "user": user},
+        "spans_tenants": spans_tenants,
+        "timeline": timeline,
+        "transitions": None if spans_tenants else len([t for t in timeline if not t["current"]]),
+        "current": None if spans_tenants
+                   else next((t["text"] for t in reversed(timeline) if t["current"]), None),
+        "note": note,
+    }
