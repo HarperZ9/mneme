@@ -50,9 +50,20 @@ It also sets the environment variable `MNEME_STATE` to `${user_config.state_path
 
 **Environment variables and credentials.**
 
+These names come from running every tool, with memory changes off and on, under a recorder of the environment reads Python code makes. Reads inside compiled libraries such as SQLite are outside what the recorder sees.
+
+Mneme's own code reads one variable:
+
 - `MNEME_STATE` holds the state database path. Claude Code sets it from your setting. The server stops at startup if it is missing, is not absolute, or passes through a linked folder.
-- `XDG_STATE_HOME` appears in Mneme's snapshot code. Only the command-line tool on Linux and macOS uses it, to find a default snapshot folder. The plugin server keeps snapshots beside your database, so it never reads this variable.
-- The server reads no credential, API key or token. The optional model extractor reads `OPENAI_BASE_URL`, `OPENAI_MODEL` and `OPENAI_API_KEY`, and the plugin server never loads it.
+
+Python's standard library reads these on Mneme's behalf:
+
+- `COLUMNS` and `LINES`: the argument parser reads them to size help text while it reads the launch arguments.
+- `LANG`, `LANGUAGE`, `LC_ALL` and `LC_MESSAGES`: the argument parser reads them to choose a language for its messages.
+- `USERPROFILE` on Windows, or `HOMEPATH` when `USERPROFILE` is not set: the doctor tool finds your home folder so it can show it as `~` in the paths it reports. On Linux and macOS the same step reads `HOME`.
+- `APPDATA`, `PYTHONUSERBASE` and `_PYTHON_PROJECT_BASE`: on Windows, the doctor tool also asks Windows for the short form of your home folder path through Python's `ctypes` library. In Python 3.13.14, loading `ctypes` loads Python's build settings module, and that module reads these three. Python 3.12.10 and 3.13.2 do not read them.
+
+Nothing else is read. `XDG_STATE_HOME` appears in Mneme's snapshot code, but only the command-line tool on Linux and macOS uses it. The plugin server keeps snapshots beside your database and never reads it. The server reads no credential, API key or token. The optional model extractor reads `OPENAI_BASE_URL`, `OPENAI_MODEL` and `OPENAI_API_KEY`, and the plugin server never loads it.
 
 ## Data and network
 

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The environment variable list in the client README and PRIVACY.md now comes from a run of every tool under a recorder of environment reads. It separates Mneme's own read (`MNEME_STATE`) from the Python standard library's (`COLUMNS`, `LINES`, `LANG`, `LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, the home folder variables the doctor tool uses, and on Windows with Python 3.13.14 `APPDATA`, `PYTHONUSERBASE` and `_PYTHON_PROJECT_BASE` from loading `ctypes`). A test holds the list to a live trace.
 - The Claude plugin manifest carries directory listing fields: display name, keywords, homepage, repository, documentation, support, privacy and terms links, and a 1024 px icon.
 - Claude Code now asks for the state database path and for **Allow memory changes** (off by default) when the plugin is enabled. The Claude `.mcp.json` passes them as `${user_config.*}` values in place of the `${MNEME_STATE}` environment placeholder. Portable and Codex manifests are unchanged.
 - The client README and PRIVACY.md gain a "What this plugin runs and handles" section covering hooks, the exact launch command, network, files written and environment variables, plus a data and network table. Both are traced from the client server's code, and tests hold the launch command and the no-network claim to the code.
