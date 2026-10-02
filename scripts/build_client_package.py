@@ -16,6 +16,12 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = 'mneme'
 DESCRIPTION = 'Local memory in a SQLite file you choose, with provenance on every recalled memory.'
+SITE = 'https://harperz9.github.io'
+REPOSITORY = 'https://github.com/HarperZ9/mneme'
+CLIENT_EXTENSIONS = frozenset({'.py', '.md', '.json', '.png'})
+WRITE_TITLE = 'Allow memory changes'
+WRITE_TEXT = ('Enable memory storage, recall, replay and two-step forgetting in the selected database. '
+              'Some reads can initialize or migrate state.')
 
 
 def entries(root, extensions=frozenset({'.py', '.md', '.json'})):
@@ -63,6 +69,22 @@ def encoded(value):
     return (json.dumps(value, indent=2, sort_keys=True) + '\n').encode()
 
 
+def listing(plugin):
+    """Claude manifest: the shared plugin fields plus the directory listing fields."""
+    return {**plugin, 'displayName': 'Mneme',
+            'keywords': ['memory', 'agent-memory', 'provenance', 'sqlite', 'local-first', 'recall', 'forgetting'],
+            'homepage': SITE + '/plugins/mneme/support.html', 'repository': REPOSITORY,
+            'documentationUrl': REPOSITORY + '/blob/main/client-plugin/README.md',
+            'supportUrl': SITE + '/plugins/mneme/support.html',
+            'privacyPolicyUrl': SITE + '/plugins/mneme/privacy.html',
+            'termsOfServiceUrl': SITE + '/plugins/mneme/terms.html', 'icon': './.claude-plugin/icon.png',
+            'userConfig': {
+                'state_path': {'type': 'string', 'title': 'Mneme state database', 'required': True,
+                               'description': 'Absolute path of the SQLite state file. Its parent folder must exist.'},
+                'memory_write': {'type': 'boolean', 'title': WRITE_TITLE, 'description': WRITE_TEXT,
+                                 'default': False, 'required': False}}}
+
+
 def manifests(version, native):
     executable = f'server/{TOOL}-local.exe'
     command = '${PLUGIN_ROOT}/' + executable if native else 'python3'
@@ -73,9 +95,13 @@ def manifests(version, native):
     plugin = {'name': TOOL + '-local', 'version': version,
               'description': DESCRIPTION,
               'author': {'name': 'Zain Dana Harper'}, 'license': 'FSL-1.1-MIT'}
-    files = {'plugin.json': encoded(plugin), '.claude-plugin/plugin.json': encoded(plugin),
+    claude_args = [arg.replace('${PLUGIN_ROOT}', '${CLAUDE_PLUGIN_ROOT}') for arg in args]
+    claude_args.append('--memory-write=${user_config.memory_write}')
+    claude = {'mcpServers': {TOOL: {'command': command.replace('${PLUGIN_ROOT}', '${CLAUDE_PLUGIN_ROOT}'),
+              'args': claude_args, 'env': {binding: '${user_config.state_path}'}, 'type': 'stdio'}}}
+    files = {'plugin.json': encoded(plugin), '.claude-plugin/plugin.json': encoded(listing(plugin)),
              '.codex-plugin/plugin.json': encoded({**plugin, 'skills': './skills/', 'mcpServers': './mcp.json'}),
-             'mcp.json': encoded(config), '.mcp.json': encoded(config).replace(b'${PLUGIN_ROOT}', b'${CLAUDE_PLUGIN_ROOT}')}
+             'mcp.json': encoded(config), '.mcp.json': encoded(claude)}
     if native:
         mcp = {'command': '${__dirname}/' + executable, 'args': [],
                'env': {binding: '${user_config.local_path}'} if binding else {}}
@@ -86,9 +112,8 @@ def manifests(version, native):
             manifest['user_config'] = {'local_path': {'type': 'directory' if TOOL == 'relay' else 'file',
                 'title': 'Launch root' if TOOL == 'relay' else 'Mneme state database',
                 'description': f'Explicit absolute local path for {binding}.', 'required': True}}
-        manifest['user_config']['memory_write'] = {'type': 'boolean', 'title': 'Allow memory changes',
-            'description': 'Enable memory storage, recall, replay and two-step forgetting in the selected database. Some reads can initialize or migrate state.',
-            'default': False, 'required': False}
+        manifest['user_config']['memory_write'] = {'type': 'boolean', 'title': WRITE_TITLE,
+            'description': WRITE_TEXT, 'default': False, 'required': False}
         mcp['args'] = ['--memory-write=${user_config.memory_write}']
         files['manifest.json'] = encoded(manifest)
     return files
@@ -121,7 +146,7 @@ def build(output, native=False, mode='dev'):
     output = Path(output).absolute()
     if output.exists():
         raise FileExistsError('output must be a new directory')
-    files = entries(ROOT / 'client-plugin')
+    files = entries(ROOT / 'client-plugin', CLIENT_EXTENSIONS)
     source = entries(ROOT / 'src' / TOOL)
     inputs = {f'src/{TOOL}/{name}': data for name, data in source.items()}
     inputs.update({f'client-plugin/{name}': data for name, data in files.items()})
