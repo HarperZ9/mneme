@@ -259,3 +259,46 @@ def test_client_server_never_loads_network_or_process_modules():
     out=subprocess.run([sys.executable,'-I','-S','-c',code,str(ROOT/'src')],capture_output=True,text=True,timeout=60)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == ''
+
+
+_RECORDER = '''
+import io, os, runpy, sys
+seen = set()
+kind = type(os.environ)
+for method in ('__getitem__', 'get', '__contains__'):
+    def wrapped(self, key, *rest, _f=getattr(kind, method)):
+        seen.add(key)
+        return _f(self, key, *rest)
+    setattr(kind, method, wrapped)
+script, requests = sys.argv[1], sys.argv[2]
+sys.argv = [script, '--memory-write=true']
+sys.stdin = io.StringIO(requests)
+real, sys.stdout = sys.stdout, io.StringIO()
+try:
+    runpy.run_path(script, run_name='__main__')
+except SystemExit:
+    pass
+sys.stdout = real
+print(sorted(k for k in seen if isinstance(k, str)))
+'''
+
+
+def test_environment_reads_are_the_ones_the_disclosure_names(packaged, tmp_path):
+    calls = [('mneme.status', {}), ('mneme.doctor', {}), ('mneme.to_crucible', {'all_users': True}),
+             ('mneme.remember', {'session': 's', 'turns': [{'role': 'user', 'text': 'I live in Denver.'}]}),
+             ('mneme.recall', {'query': 'Denver'}), ('mneme.drift', {}), ('mneme.audit', {})]
+    lines = [request(1, 'initialize'), request(2, 'tools/list')]
+    lines += [request(i, 'tools/call', name=n, arguments=a) for i, (n, a) in enumerate(calls, 3)]
+    env = {k: v for k, v in os.environ.items() if k.upper() in {'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP',
+                                                                'SYSTEMDRIVE', 'USERPROFILE', 'HOME'}}
+    env['MNEME_STATE'] = str(tmp_path / 'synthetic.db')
+    p = subprocess.run([sys.executable, '-I', '-S', '-B', '-c', _RECORDER, str(packaged / 'server/serve.py'),
+                        ''.join(json.dumps(r) + '\n' for r in lines)],
+                       capture_output=True, text=True, env=env, cwd=tmp_path, timeout=60)
+    assert p.returncode == 0, p.stderr
+    seen = set(json.loads(p.stdout.strip().splitlines()[-1].replace("'", '"')))
+    named = {'MNEME_STATE', 'COLUMNS', 'LINES', 'LANG', 'LANGUAGE', 'LC_ALL', 'LC_MESSAGES',
+             'USERPROFILE', 'HOMEPATH', 'HOME'}
+    assert 'MNEME_STATE' in seen and seen <= named, seen - named
+    section = _disclosure('README.md')
+    assert all(f'`{name}`' in section for name in named)
