@@ -4,7 +4,7 @@
 
 - The Claude plugin manifest carries directory listing fields: display name, keywords, homepage, repository, documentation, support, privacy and terms links, and a 1024 px icon.
 - Claude Code now asks for the state database path and for **Allow memory changes** (off by default) when the plugin is enabled. The Claude `.mcp.json` passes them as `${user_config.*}` values in place of the `${MNEME_STATE}` environment placeholder. Portable and Codex manifests are unchanged.
-- The client README gains a data and network table derived from the client server's code.
+- The client README and PRIVACY.md gain a "What this plugin runs and handles" section covering hooks, the exact launch command, network, files written and environment variables, plus a data and network table. Both are traced from the client server's code, and tests hold the launch command and the no-network claim to the code.
 
 ## 0.6.0 - 2026-10-01
 

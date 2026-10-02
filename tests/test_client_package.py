@@ -229,3 +229,33 @@ def test_native_builder_pins_reproducibility_environment(tmp_path,monkeypatch):
     monkeypatch.setattr(package.subprocess,'check_output',lambda *a,**k:'1234567890\n')
     with pytest.raises(StopBeforeBuild):
         package.build(tmp_path/'native-build',native=True)
+
+
+def _disclosure(name):
+    text=(ROOT/'client-plugin'/name).read_text(encoding='utf-8')
+    start=text.index('## What this plugin runs and handles')
+    end=text.find('\n## ',start+1)
+    return text[start:end if end != -1 else None]
+
+
+def test_runs_and_handles_section_matches_the_claude_launch():
+    readme,privacy=_disclosure('README.md'),_disclosure('PRIVACY.md')
+    assert readme == privacy
+    server=json.loads(manifests(qualify('dev')[0],False)['.mcp.json'])['mcpServers'][TOOL]
+    assert ' '.join([server['command'],*server['args']]) in readme
+    for name,value in server['env'].items():
+        assert f'`{name}`' in readme and value in readme
+    assert 'This plugin has no hooks.' in readme and not (ROOT/'client-plugin/hooks').exists()
+
+
+def test_client_server_never_loads_network_or_process_modules():
+    # Backs the "opens no network connection" disclosure: import every module the
+    # MCP tools can reach, including the lazy ones, and look for network code.
+    code=('import importlib,sys;sys.path.insert(0,sys.argv[1]);'
+          '[importlib.import_module("mneme."+m) for m in ("mcp","snapshot_binding","embed","temporal",'
+          '"ingest","origin","compose","replay","consolidate","entity","erase","mcp_forget")];'
+          'print(",".join(m for m in ("socket","ssl","urllib.request","http.client","subprocess",'
+          '"mneme.llm_extract") if m in sys.modules))')
+    out=subprocess.run([sys.executable,'-I','-S','-c',code,str(ROOT/'src')],capture_output=True,text=True,timeout=60)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == ''
