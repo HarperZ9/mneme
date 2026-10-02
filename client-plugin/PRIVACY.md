@@ -10,7 +10,8 @@ Snapshot writes and cleanup use a state-specific sibling directory. Legacy globa
 ## What it reads, stores and sends
 
 Mneme reads and, with the memory-write grant, writes the SQLite file you select at
-install. Replay snapshots go in a folder beside that file. Mneme opens no network
+install. Origin recheck reads the cited source files inside the folder named in
+that call. Replay snapshots go in a folder beside the SQLite file. Mneme opens no network
 connection and collects no usage statistics.
 
 ## Retention and support

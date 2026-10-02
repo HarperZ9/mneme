@@ -3,7 +3,39 @@
     "name": "Zain Dana Harper"
   },
   "description": "Local memory in a SQLite file you choose, with provenance on every recalled memory.",
+  "displayName": "Mneme",
+  "documentationUrl": "https://github.com/HarperZ9/mneme/blob/main/client-plugin/README.md",
+  "homepage": "https://harperz9.github.io/plugins/mneme/support.html",
+  "icon": "./.claude-plugin/icon.png",
+  "keywords": [
+    "memory",
+    "agent-memory",
+    "provenance",
+    "sqlite",
+    "local-first",
+    "recall",
+    "forgetting"
+  ],
   "license": "FSL-1.1-MIT",
   "name": "mneme-local",
+  "privacyPolicyUrl": "https://harperz9.github.io/plugins/mneme/privacy.html",
+  "repository": "https://github.com/HarperZ9/mneme",
+  "supportUrl": "https://harperz9.github.io/plugins/mneme/support.html",
+  "termsOfServiceUrl": "https://harperz9.github.io/plugins/mneme/terms.html",
+  "userConfig": {
+    "memory_write": {
+      "default": false,
+      "description": "Enable memory storage, recall, replay and two-step forgetting in the selected database. Some reads can initialize or migrate state.",
+      "required": false,
+      "title": "Allow memory changes",
+      "type": "boolean"
+    },
+    "state_path": {
+      "description": "Absolute path of the SQLite state file. Its parent folder must exist.",
+      "required": true,
+      "title": "Mneme state database",
+      "type": "string"
+    }
+  },
   "version": "0.6.0"
 }

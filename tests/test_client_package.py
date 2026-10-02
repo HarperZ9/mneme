@@ -127,6 +127,64 @@ def test_client_root_expansion_is_client_specific():
     assert b'${PLUGIN_ROOT}' in docs['mcp.json']
     assert b'${CLAUDE_PLUGIN_ROOT}' in docs['.mcp.json']
     assert b'${PLUGIN_ROOT}' not in docs['.mcp.json']
+    assert b'${MNEME_STATE}' in docs['mcp.json'] and b'${MNEME_STATE}' not in docs['.mcp.json']
+
+
+def test_claude_manifest_carries_directory_listing_and_prompts_for_bindings():
+    docs=manifests(qualify('dev')[0],True)
+    claude=json.loads(docs['.claude-plugin/plugin.json'])
+    portable=json.loads(docs['plugin.json'])
+    native=json.loads(docs['manifest.json'])
+    for key in ('homepage','documentationUrl','supportUrl','privacyPolicyUrl','termsOfServiceUrl'):
+        assert claude[key].startswith('https://')
+    assert claude['repository'] == 'https://github.com/HarperZ9/mneme'
+    assert claude['displayName'] == 'Mneme' and 5 <= len(claude['keywords']) <= 8
+    assert all(k == k.lower() for k in claude['keywords'])
+    assert {k: claude[k] for k in portable} == portable
+    assert 'userConfig' not in portable and 'icon' not in portable
+    assert set(claude['userConfig']) == {'state_path','memory_write'}
+    for entry in claude['userConfig'].values():
+        assert set(entry) <= {'type','title','description','required','default','sensitive'}
+    assert claude['userConfig']['state_path']['required'] is True
+    # The write switch mirrors the MCPB option: same title, text and default-off.
+    assert claude['userConfig']['memory_write'] == native['user_config']['memory_write']
+    server=json.loads(docs['.mcp.json'])['mcpServers'][TOOL]
+    assert server['command'] == '${CLAUDE_PLUGIN_ROOT}/server/mneme-local.exe'
+    source=json.loads(manifests(qualify('dev')[0],False)['.mcp.json'])['mcpServers'][TOOL]
+    assert source['command'] == 'python3'
+    assert source['args'] == ['-I','-S','-B','${CLAUDE_PLUGIN_ROOT}/server/serve.py',
+                              '--memory-write=${user_config.memory_write}']
+    assert source['env'] == {'MNEME_STATE':'${user_config.state_path}'}
+    assert json.loads(docs['mcp.json'])['mcpServers'][TOOL]['env'] == {'MNEME_STATE':'${MNEME_STATE}'}
+
+
+def test_committed_icon_is_a_square_png_the_directory_accepts():
+    data=(ROOT/'client-plugin/.claude-plugin/icon.png').read_bytes()
+    assert data[:8] == bytes([137,80,78,71,13,10,26,10]) and data[12:16] == b'IHDR'
+    width,height=int.from_bytes(data[16:20],'big'),int.from_bytes(data[20:24],'big')
+    assert width == height and 512 <= width <= 2048 and len(data) < 2*1024*1024
+
+
+def test_committed_source_manifests_match_generated_contract():
+    for name,expected in manifests(qualify('dev')[0],False).items():
+        assert json.loads((ROOT/'client-plugin'/name).read_text()) == json.loads(expected), name
+
+
+def test_source_zip_carries_icon_and_server_source(tmp_path):
+    archive_path=build(tmp_path/'output')[0]
+    with zipfile.ZipFile(archive_path) as z:
+        names=set(z.namelist())
+        assert z.read('.claude-plugin/icon.png') == (ROOT/'client-plugin/.claude-plugin/icon.png').read_bytes()
+    assert 'server/serve.py' in names and 'server/src/mneme/mcp.py' in names
+
+
+def test_claude_launch_values_start_the_extracted_server(packaged,tmp_path):
+    # The exact strings ${user_config.*} substitution produces for a boolean and a path.
+    for value,count in (('false',4),('true',11)):
+        p=invoke(packaged/'server/serve.py',tmp_path,[request(1,'initialize'),request(2,'tools/list')],
+                 args=['--memory-write='+value])
+        assert p.returncode == 0, p.stderr
+        assert len(json.loads(p.stdout.splitlines()[1])['result']['tools']) == count
 
 
 def test_version_drift_refused(tmp_path,monkeypatch):
