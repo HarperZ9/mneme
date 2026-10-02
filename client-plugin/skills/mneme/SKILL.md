@@ -1,6 +1,6 @@
 ---
 name: mneme-local
-description: Use Mneme for its explicit local tool workflow with operator-owned state and permissions.
+description: Store and recall memories in a local SQLite file you chose, with the source of each memory. Use when the user asks Claude to remember something, recall what was saved, check a saved memory against its source, or forget it.
 ---
 
 Call mneme.status first. If unavailable, report the connection failure without inventing a result.

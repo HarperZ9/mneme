@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The Claude plugin folder now carries the server code under `client-plugin/server/src`, so a directory install that receives only that folder starts. `python scripts/build_client_package.py --sync-vendored` rewrites the copy from `src/`, and a test fails when it drifts. The launcher no longer looks outside the plugin folder; a missing copy stops with one line asking you to reinstall. Tests launch the folder alone with the exact Claude command and check the directory's file count and size limits.
+- Clearer descriptions: the skill now says what Mneme does and when to use it, and `mneme.remember` says it saves only the turns the user asks to keep. The client README and PRIVACY.md gain a "Files read" list covering the database, origin recheck source files and the doctor's `.git` checks.
 - The environment variable list in the client README and PRIVACY.md now comes from a run of every tool under a recorder of environment reads. It separates Mneme's own read (`MNEME_STATE`) from the Python standard library's (`COLUMNS`, `LINES`, `LANG`, `LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, the home folder variables the doctor tool uses, and on Windows with Python 3.13.14 `APPDATA`, `PYTHONUSERBASE` and `_PYTHON_PROJECT_BASE` from loading `ctypes`). A test holds the list to a live trace.
 - The Claude plugin manifest carries directory listing fields: display name, keywords, homepage, repository, documentation, support, privacy and terms links, and a 1024 px icon.
 - Claude Code now asks for the state database path and for **Allow memory changes** (off by default) when the plugin is enabled. The Claude `.mcp.json` passes them as `${user_config.*}` values in place of the `${MNEME_STATE}` environment placeholder. Portable and Codex manifests are unchanged.

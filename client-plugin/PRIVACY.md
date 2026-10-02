@@ -26,6 +26,12 @@ It also sets the environment variable `MNEME_STATE` to `${user_config.state_path
 
 **Network.** The server opens no network connection. Its code opens no socket, makes no web request and starts no other program. It talks to Claude Code only through standard input and output. Mneme's library has an optional model-based extractor that can call a model endpoint. The plugin server never loads it.
 
+**Files read.**
+
+- The state database you chose, and its SQLite sidecar files.
+- For `mneme.origin_recheck`, each local source file that a stored memory cites, inside the folder named in that call. A memory cites one file for each source turn that came from a local document. The folder comes from the tool call, so it can be any folder your account can read. Recheck reads each file to compare its hash and returns the result, not the file.
+- For `mneme.doctor`, whether each folder above the database contains a `.git` entry, to warn you when the database sits inside a Git work tree.
+
 **Files written.**
 
 - The state database, at the path you chose, only when memory changes are allowed. While SQLite writes, it can keep a short-lived file beside it whose name ends in `-journal`. The database stays until you forget memories with the forget tool or delete the file.

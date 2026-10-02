@@ -1,0 +1,457 @@
+"""store.py — the SQLite substrate for the 4-tier memory (stdlib sqlite3, zero-dep).
+
+Layer model used by the store:
+  L0 turn      raw dialogue turns (role, text, session)
+  L1 atom      atomic facts extracted from turns
+  L2 scenario  scene blocks grouping related atoms
+  L3 persona   the user profile synthesized from scenarios
+
+Memory rows carry provenance (source_ids, extractor, criterion, content_sha256)
+so recall and drift checks can re-derive from the same bytes. The store is pure
+storage: extraction (extract.py), retrieval (recall.py), and drift (drift.py) are
+separate organs that read/write through it.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import sqlite3
+import time
+import weakref
+from collections.abc import Iterable
+from pathlib import Path
+
+from . import audit_blind, audit_writer, schema_guard, snapshot_dir
+from .receipt import ProvenanceFormatError, ProvenanceReceipt, memory_hash, validate_source_ids
+from .schema import MIGRATIONS, SCHEMA, SCHEMA_VERSION
+
+LAYERS = ("L0", "L1", "L2", "L3")
+SQLITE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+_READ_ONLY_REQUIRED_COLUMNS = {
+    "turns": {"id", "role", "text", "content_sha256"},
+    "memories": {
+        "id", "layer", "session", "user", "text", "source_ids", "extractor",
+        "criterion", "content_sha256", "created_ord", "valid_until",
+        "source_hashes",
+    },
+}
+
+
+class StoreSchemaError(sqlite3.DatabaseError):
+    """A read-only database cannot satisfy Mneme's current read contract."""
+
+
+def _check_snapshot_deadline(deadline: float) -> None:
+    if time.monotonic() > deadline:
+        raise StoreSchemaError("timed out creating the private replay snapshot")
+
+
+def _snapshot_fingerprint(
+        path: Path, *, deadline: float) -> tuple[int, int, int, int, int, str]:
+    _check_snapshot_deadline(deadline)
+    stat = path.stat()
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            _check_snapshot_deadline(deadline)
+            digest.update(chunk)
+    _check_snapshot_deadline(deadline)
+    return (
+        stat.st_dev,
+        stat.st_ino,
+        stat.st_nlink,
+        stat.st_size,
+        stat.st_mtime_ns,
+        digest.hexdigest(),
+    )
+
+
+def quiescent_snapshot_path(path: str | Path) -> Path:
+    """Validate a private, rollback-journal source for evidence-safe replay."""
+    if str(path) == ":memory:":
+        raise StoreSchemaError(
+            "read-only replay requires a quiescent filesystem snapshot, not :memory:"
+        )
+    snapshot = Path(path).expanduser().resolve()
+    stat = snapshot.stat()
+    if stat.st_nlink != 1:
+        raise StoreSchemaError(
+            "read-only replay requires a single-link snapshot; hardlink aliases "
+            "can hide live SQLite sidecars"
+        )
+    sidecars = [Path(f"{snapshot}{suffix}") for suffix in SQLITE_SIDECAR_SUFFIXES]
+    present = [sidecar.name for sidecar in sidecars if sidecar.exists()]
+    if present:
+        raise StoreSchemaError(
+            "read-only replay requires a quiescent snapshot without "
+            f"SQLite sidecars; found: {', '.join(present)}"
+        )
+    with snapshot.open("rb") as source:
+        header = source.read(20)
+    if (header.startswith(b"SQLite format 3\x00") and len(header) >= 20
+            and (header[18] == 2 or header[19] == 2)):
+        raise StoreSchemaError(
+            "read-only replay requires a rollback-journal snapshot; checkpoint "
+            "and copy WAL-mode state with SQLite's backup API first"
+        )
+    return snapshot
+
+
+def _private_replay_snapshot(source_path: Path) -> Path:
+    """Materialize a SQLite-consistent process-owned snapshot and seal its source."""
+    deadline = time.monotonic() + 10.0
+    source_path = quiescent_snapshot_path(source_path)
+    before = _snapshot_fingerprint(source_path, deadline=deadline)
+    fd, name = snapshot_dir.create_snapshot_file(source_path)
+    private_path = Path(name)
+    source = destination = None
+    # mkstemp() has already created the file, so ownership starts here. Closing
+    # the descriptor inside the guard keeps a failure from orphaning it.
+    try:
+        os.close(fd)
+        def bounded_progress(_status: int, _remaining: int, _total: int) -> None:
+            _check_snapshot_deadline(deadline)
+
+        source = sqlite3.connect(
+            source_path.as_uri() + "?mode=ro",
+            uri=True,
+            timeout=1.0,
+        )
+        quiescent_snapshot_path(source_path)
+        destination = sqlite3.connect(str(private_path))
+        source.backup(
+            destination,
+            pages=256,
+            progress=bounded_progress,
+            sleep=0.05,
+        )
+        destination.set_progress_handler(
+            lambda: int(time.monotonic() > deadline),
+            1000,
+        )
+        try:
+            row = destination.execute("PRAGMA quick_check").fetchone()
+        except sqlite3.OperationalError as exc:
+            if time.monotonic() > deadline:
+                raise StoreSchemaError(
+                    "timed out creating the private replay snapshot"
+                ) from exc
+            raise
+        finally:
+            destination.set_progress_handler(None, 0)
+        _check_snapshot_deadline(deadline)
+        if row is None or row[0] != "ok":
+            raise StoreSchemaError("private replay snapshot failed SQLite quick_check")
+        destination.close()
+        destination = None
+        source.close()
+        source = None
+        quiescent_snapshot_path(source_path)
+        if _snapshot_fingerprint(source_path, deadline=deadline) != before:
+            raise StoreSchemaError(
+                "replay source changed while its private snapshot was created"
+            )
+        return private_path
+    except BaseException:
+        if destination is not None:
+            destination.close()
+        if source is not None:
+            source.close()
+        private_path.unlink(missing_ok=True)
+        raise
+
+
+def _close_private_snapshot(
+        conn: sqlite3.Connection, path: Path) -> str | None:
+    """Close a private replay connection and best-effort remove all owned files."""
+    errors = []
+    try:
+        conn.close()
+    except (OSError, sqlite3.Error) as exc:
+        errors.append(f"connection close failed: {exc}")
+    for suffix in ("", *SQLITE_SIDECAR_SUFFIXES):
+        owned_path = Path(f"{path}{suffix}")
+        try:
+            owned_path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            errors.append(f"could not remove {owned_path.name}: {exc}")
+    if errors:
+        return "private replay cleanup incomplete: " + "; ".join(errors)
+    return None
+
+
+class Store:
+    """Thin, deterministic wrapper over a SQLite memory DB. A monotonic `ord`
+    counter (persisted in meta) orders rows without a wall clock, so a rebuild
+    from the same inputs has the same turns and memories (meta holds a random id)."""
+
+    SCHEMA_VERSION = SCHEMA_VERSION
+
+    def __init__(self, path: str | Path = ":memory:", *, read_only: bool = False,
+                 immutable_snapshot: bool = False):
+        self.read_only = read_only
+        self.immutable_snapshot = immutable_snapshot
+        self.private_snapshot_path: Path | None = None
+        self.schema_warning: str | None = None
+        self._private_finalizer: weakref.finalize | None = None
+        if immutable_snapshot and not read_only:
+            raise ValueError("immutable_snapshot=True requires read_only=True")
+        if read_only:
+            if str(path) == ":memory:":
+                raise ValueError("read-only Store requires a filesystem database path")
+            if immutable_snapshot:
+                self.private_snapshot_path = _private_replay_snapshot(
+                    Path(path).expanduser().resolve()
+                )
+                uri = self.private_snapshot_path.as_uri() + "?mode=ro&immutable=1"
+            else:
+                uri = Path(path).expanduser().resolve().as_uri() + "?mode=ro"
+            try:
+                self.conn = sqlite3.connect(uri, uri=True)
+            except BaseException:
+                if self.private_snapshot_path is not None:
+                    self.private_snapshot_path.unlink(missing_ok=True)
+                    self.private_snapshot_path = None
+                raise
+        else:
+            self.conn = sqlite3.connect(str(path))
+        self.conn.row_factory = sqlite3.Row
+        if read_only:
+            try:
+                self._validate_read_schema()
+            except Exception:
+                self.conn.close()
+                if self.private_snapshot_path is not None:
+                    self.private_snapshot_path.unlink(missing_ok=True)
+                    self.private_snapshot_path = None
+                raise
+        else:
+            self.conn.executescript(SCHEMA)
+            self._migrate()
+            self.conn.commit()
+            snapshot_dir.startup_sweep()
+        if self.private_snapshot_path is not None:
+            self._private_finalizer = weakref.finalize(
+                self,
+                _close_private_snapshot,
+                self.conn,
+                self.private_snapshot_path,
+            )
+
+    def _validate_read_schema(self) -> None:
+        problems = []
+        for table, required in _READ_ONLY_REQUIRED_COLUMNS.items():
+            columns = {
+                row["name"]
+                for row in self.conn.execute(f'PRAGMA table_info("{table}")').fetchall()
+            }
+            missing = sorted(required - columns)
+            if missing:
+                problems.append(
+                    f"{table} missing required column(s): {', '.join(missing)}")
+        if problems:
+            raise StoreSchemaError(
+                "read-only Store schema incompatible: " + "; ".join(problems))
+
+    def _migrate(self) -> None:
+        """Bring an existing DB up to the current schema in place (add any newer
+        column, stamp the version) so a format change never crashes with a raw
+        sqlite traceback."""
+        for table, column, decl in MIGRATIONS:
+            cols = {r["name"] for r in
+                    self.conn.execute(f"PRAGMA table_info({table})").fetchall()}
+            if column.strip('"') not in cols:
+                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+        self.schema_warning = schema_guard.stamp(self.conn, self.SCHEMA_VERSION)
+        snapshot_dir.ensure_store_id(self.conn)
+        # anchor the audit head once (a legacy log at its current tail), so tail
+        # truncation is detectable from here on
+        if self._meta_get("audit_count") is None:
+            row = self.conn.execute(
+                "SELECT COUNT(*) c, "
+                "(SELECT entry_sha FROM audit ORDER BY ord DESC LIMIT 1) h "
+                "FROM audit").fetchone()
+            self._meta_set("audit_count", str(row["c"]))
+            self._meta_set("audit_head", row["h"] or "")
+
+    # -- meta (small key/value; ordinal + audit anchor + schema version) ------
+    def _meta_get(self, key: str) -> str | None:
+        return audit_writer.meta_get(self.conn, key)
+
+    def _meta_set(self, key: str, value: str) -> None:
+        audit_writer.meta_set(self.conn, key, value)
+
+    # -- ordinal (clock-free ordering) ---------------------------------------
+    def _next_ord(self) -> int:
+        return audit_writer.next_ord(self.conn)
+
+    # -- L0 turns ------------------------------------------------------------
+    def add_turn(self, turn_id: str, session: str, role: str, text: str,
+                 origin: dict | None = None) -> str:
+        from .receipt import content_hash
+        sha = content_hash(role, text)
+        self.conn.execute(
+            "INSERT OR REPLACE INTO turns(id,session,role,text,ord,content_sha256,origin) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (turn_id, session, role, text, self._next_ord(), sha,
+             json.dumps(origin) if origin else ""))
+        self.conn.commit()
+        return turn_id
+
+    def turn_origin(self, turn_id: str) -> dict | None:
+        """The origin/metadata receipt bound to a turn.
+
+        Gather turns carry an external source receipt. Named-user high-level
+        turns may carry internal partition metadata. Legacy native turns return
+        None.
+        """
+        row = self.turn(turn_id)
+        if row is None or not row["origin"]:
+            return None
+        return json.loads(row["origin"])
+
+    def turns(self, session: str | None = None) -> list[sqlite3.Row]:
+        if session is None:
+            return self.conn.execute("SELECT * FROM turns ORDER BY ord").fetchall()
+        return self.conn.execute(
+            "SELECT * FROM turns WHERE session=? ORDER BY ord", (session,)).fetchall()
+
+    def turn(self, turn_id: str) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM turns WHERE id=?", (turn_id,)).fetchone()
+
+    # -- memories (L1-L3) ----------------------------------------------------
+    def add_memory(self, memory_id: str, layer: str, text: str,
+                   source_ids: Iterable[str], extractor: str, criterion: str,
+                   session: str | None = None, user: str = "") -> ProvenanceReceipt:
+        if layer not in LAYERS:
+            raise ValueError(f"layer must be one of {LAYERS}, got {layer!r}")
+        if isinstance(source_ids, str | bytes):
+            raise ProvenanceFormatError(
+                "malformed provenance: source_ids must be an iterable of source-id strings")
+        sids = validate_source_ids(list(source_ids))
+        sha = memory_hash(text, sids, criterion)
+        # snapshot each source's content hash NOW, so a later change to a source
+        # (turn or cited memory) is caught by re-comparison — the content address
+        # binds source CONTENT, not just ids.
+        src_hashes = {}
+        for sid in sids:
+            src = self.turn(sid) or self.memory(sid)
+            if src is not None:
+                src_hashes[sid] = src["content_sha256"]
+        source_ids_json = json.dumps(sids)
+        source_hashes_json = json.dumps(src_hashes, sort_keys=True)
+        # id-collision guard: idempotent for identical content in the same
+        # partition, but never silently REPLACE a row owned by another user or
+        # carrying different content (that is update()'s audited job) — fail
+        # closed with a named error, not a laundered overwrite.
+        prior = self.memory(memory_id)
+        if prior is not None:
+            if prior["user"] != user:
+                raise ValueError(
+                    f"memory id {memory_id!r} already owned by user "
+                    f"{prior['user']!r}; refusing cross-tenant overwrite")
+            if prior["content_sha256"] != sha:
+                raise ValueError(
+                    f"memory id {memory_id!r} exists with different content; "
+                    f"route a content change through update()")
+            if (prior["layer"] == layer
+                    and prior["session"] == session
+                    and prior["text"] == text
+                    and prior["source_ids"] == source_ids_json
+                    and prior["extractor"] == extractor
+                    and prior["criterion"] == criterion
+                    and prior["valid_until"] is None
+                    and prior["source_hashes"] == source_hashes_json):
+                return ProvenanceReceipt(
+                    memory_id, layer, tuple(sids), extractor, criterion, sha)
+        self.conn.execute(
+            "INSERT OR REPLACE INTO memories"
+            '(id,layer,session,"user",text,source_ids,extractor,criterion,content_sha256,created_ord,source_hashes) '
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (memory_id, layer, session, user, text, source_ids_json, extractor,
+             criterion, sha, self._next_ord(), source_hashes_json))
+        self.conn.commit()
+        return ProvenanceReceipt(memory_id, layer, tuple(sids), extractor, criterion, sha)
+
+    def memories(self, layer: str | None = None, session: str | None = None,
+                 user: str | None = None, *, as_of: int | None = None,
+                 include_superseded: bool = False) -> list[sqlite3.Row]:
+        """Current memories by default (valid_until IS NULL). `as_of=N` returns
+        the memories that were valid at ordinal N (temporal snapshot);
+        `include_superseded` returns the full history including replaced ones."""
+        q = "SELECT * FROM memories"
+        conds, args = [], []
+        if layer:
+            conds.append("layer=?"); args.append(layer)
+        if session:
+            conds.append("session=?"); args.append(session)
+        if user is not None:
+            conds.append('"user"=?'); args.append(user)
+        if as_of is not None:
+            conds.append("created_ord<=?"); args.append(as_of)
+            conds.append("(valid_until IS NULL OR valid_until>?)"); args.append(as_of)
+        elif not include_superseded:
+            conds.append("valid_until IS NULL")     # current memories only
+        if conds:
+            q += " WHERE " + " AND ".join(conds)
+        return self.conn.execute(q + " ORDER BY created_ord", args).fetchall()
+
+    def supersede(self, old_id: str, new_id: str, reason: str = "") -> dict | None:
+        """Close a memory's validity (a fact CHANGED, not erased): mark it
+        superseded by `new_id` as of now, KEEPING it for temporal history. A
+        forget erases a fact with its history; supersede preserves the timeline.
+        The audit entry holds a blinded value (audit_blind.py). Returns the
+        entry, or None if `old_id` is absent/already closed."""
+        return audit_blind.supersede(self, old_id, new_id, reason)
+
+    def users(self) -> list[str]:
+        rows = self.conn.execute('SELECT DISTINCT "user" FROM memories ORDER BY "user"').fetchall()
+        return [r["user"] for r in rows]
+
+    def memory(self, memory_id: str) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM memories WHERE id=?", (memory_id,)).fetchone()
+
+    def provenance(self, memory_id: str) -> ProvenanceReceipt | None:
+        r = self.memory(memory_id)
+        if r is None:
+            return None
+        return ProvenanceReceipt(r["id"], r["layer"], tuple(json.loads(r["source_ids"])),
+                                 r["extractor"], r["criterion"], r["content_sha256"])
+
+    # -- accountable editing: forget / update leave a tombstone in an
+    #    append-only, hash-chained audit log so the forgetting is itself auditable
+    def forget(self, memory_id: str, reason: str = "", *,
+               merged_into: str | None = None) -> dict | None:
+        """Row-level delete with a blinded tombstone, for consolidation (the text
+        survives in the kept duplicate `merged_into`, which inherits the row's
+        sources as lineage). A user's forget goes through erase.py, which also
+        removes source turns. Returns the audit entry, or None if absent."""
+        return audit_blind.forget(self, memory_id, reason, merged_into=merged_into)
+
+    def update(self, memory_id: str, new_text: str, reason: str = "") -> dict | None:
+        """Replace a memory's text, re-deriving its hash and leaving an audit
+        entry with blinded before/after values (audit_blind.py) and the reason.
+        Provenance (sources, criterion) is kept."""
+        return audit_blind.update(self, memory_id, new_text, reason)
+
+    def audit_log(self) -> list:
+        return self.conn.execute("SELECT * FROM audit ORDER BY ord").fetchall()
+
+    def verify_audit(self) -> bool:
+        """Re-derive the audit chain; True iff every entry hash reproduces AND
+        the chain still ends at the committed head (count + last entry_sha). A
+        deleted, reordered, edited, OR truncated tombstone breaks it — you cannot
+        quietly forget that you forgot something, and you cannot forget that you
+        forgot by lopping off the tail."""
+        return audit_writer.verify(self.conn)
+
+    def close(self) -> str | None:
+        if self._private_finalizer is not None and self._private_finalizer.alive:
+            warning = self._private_finalizer()
+            self.private_snapshot_path = None
+            return warning
+        self.conn.close()
+        return None
