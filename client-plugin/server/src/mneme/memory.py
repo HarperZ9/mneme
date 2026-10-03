@@ -90,6 +90,16 @@ class AgentMemory:
                       embedder=self.embedder, recency_weight=recency_weight,
                       layer=layer or "L1", user=user, session=session, as_of=as_of)
 
+    def navigate(self, query: str, *, top_k: int = 5, ratio: float = 0.5,
+                 user: str | None = None, session: str | None = None) -> dict:
+        """Opt-in navigation recall over L1 atoms: walk a topic outline and rank
+        only the memories it reaches. The receipt records every branch scored
+        and followed (see navigate.py); flat ``recall`` stays the default."""
+        from .navigate import navigate
+        rows = [{"id": r["id"], "text": r["text"]}
+                for r in self.store.memories(layer="L1", session=session, user=user)]
+        return navigate(query, rows, top_k=top_k, ratio=ratio)
+
     # -- temporal ------------------------------------------------------------
     def supersede(self, old_id: str, new_text: str, *, reason: str = "") -> dict | None:
         """A fact CHANGED: create a new memory carrying `new_text` (grounded on
