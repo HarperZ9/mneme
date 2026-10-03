@@ -4,7 +4,7 @@ Mneme records memories with provenance, returns recall receipts that can be re-d
 
 ## Install
 
-The README names the current release and its install commands. Version 0.5.0 adds the changes described below: a forget that erases source turns and derived rows, `mneme status` and `mneme doctor`. Version 0.5.1 fixes gaps in that forget, and this page describes the forget as 0.5.1 runs it. To work from a source checkout:
+The README names the current release and its install commands. Version 0.5.0 adds the changes described below: a forget that erases source turns and derived rows, `mneme status` and `mneme doctor`. Version 0.5.1 fixes gaps in that forget, and this page describes the forget as 0.5.1 runs it. Version 0.7.0 adds opt-in navigation recall, described in [docs/navigation-recall.md](docs/navigation-recall.md). To work from a source checkout:
 
 ```bash
 python -m pip install -e .
@@ -85,6 +85,6 @@ Descriptors remain declarative: no executable commands, host state paths, or dat
 
 Origin rechecks are opt-in and profile-bound. Supported Gather docs or file-read receipts compare normalized decoded text; Mneme does not fetch network origins or prove raw-byte integrity for those receipts. Crucible replay verifies Mneme's sealed measurements and does not independently read external sources. A forget reaches the database file and its replay snapshots, and scans other snapshots it can find; it does not reach exports, backups, copies of the file made elsewhere, text already sent to a model provider through an LLM extractor, an embedder or an MCP client, or the results an MCP client keeps in its own session history.
 
-## 0.6.0 client distribution candidate
+## 0.6.0 client distribution
 
-The new local client adapter requires an explicit state binding and launch-time approval for full memory access. See [client installation and permissions](client-plugin/README.md). The existing 0.5.1 memory behavior is retained; this source candidate is not published.
+The new local client adapter requires an explicit state binding and launch-time approval for full memory access. See [client installation and permissions](client-plugin/README.md). The existing 0.5.1 memory behavior is retained. The 0.6.0 GitHub release attaches the source and Windows client packages.
