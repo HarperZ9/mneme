@@ -452,6 +452,8 @@ per-probe detail and the exact token estimator, so a third party can re-run the
 measurement over the same conversation and compare the number. Point it at your
 own conversation with `--turns convo.json --probes probes.json`.
 
+Navigation recall, an opt-in mode that ranks only the memories a topic-outline walk reaches and records the walk in its receipt, has its own bench: `python -m mneme.navbench`. Numbers, the bar set before the run and its limits are in [docs/navigation-recall.md](docs/navigation-recall.md).
+
 ## Scenarios (L2)
 
 ```bash
