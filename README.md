@@ -1,6 +1,20 @@
-<p align="center"><img src="docs/art/mneme-header.svg" alt="mneme: Source provenance, reproducible ranking, and drift checks." width="100%"></p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/HarperZ9/mneme/main/docs/art/hero-dark.svg">
+  <img src="https://raw.githubusercontent.com/HarperZ9/mneme/main/docs/art/hero-light.svg" alt="mneme: Agent memory with source provenance and re-derivable recall receipts. Layered rings drawn in fine lines, each slightly deformed, tighten around a bright core." width="100%">
+</picture>
 
 # mneme
+
+Agent memory with source provenance and re-derivable recall receipts.
+
+```
+python -m pip install flywheel-mneme
+```
+
+[![version: 0.7.0](https://img.shields.io/badge/version-0.7.0-e6e1d6?style=flat-square&labelColor=1a1712)](https://pypi.org/project/flywheel-mneme/)
+[![CI](https://github.com/HarperZ9/mneme/actions/workflows/ci.yml/badge.svg)](https://github.com/HarperZ9/mneme/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-FSL--1.1--MIT-e6e1d6?style=flat-square&labelColor=1a1712)](https://github.com/HarperZ9/mneme/blob/main/LICENSE)
+![python 3.11+](https://img.shields.io/badge/python-3.11%2B-e6e1d6?style=flat-square&labelColor=1a1712)
 
 > Accountable agent memory. Mneme records source provenance for stored
 > memories, returns recall receipts that reproduce ranking, and detects source
