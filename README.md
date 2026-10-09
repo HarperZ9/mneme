@@ -56,6 +56,12 @@ Zero runtime dependencies · local by default · deterministic · fair-source. T
 store stays on your machine; text you send through an LLM extractor, an
 embedder or an MCP client goes to that model's provider under its terms.
 
+## See it work, step by step
+
+The [animated explainer](https://harperz9.github.io/repo-explainers/mneme.html)
+walks through one conversation through remember, recall with a re-runnable receipt, the drift check on an edited, altered and deleted source, the fail-closed roll-up, and an audited forget. Every value on it is output from this repository. Its
+source is [docs/explainer/index.html](docs/explainer/index.html).
+
 ## Why it matters
 
 Agent memory systems need evidence for two operational questions:
