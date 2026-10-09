@@ -62,6 +62,60 @@ The [animated explainer](https://harperz9.github.io/repo-explainers/mneme.html)
 walks through one conversation through remember, recall with a re-runnable receipt, the drift check on an edited, altered and deleted source, the fail-closed roll-up, and an audited forget. Every value on it is output from this repository. Its
 source is [docs/explainer/index.html](docs/explainer/index.html).
 
+## Watch
+
+[![Re-derive it. Don't take it on trust.: a narrated film, 2 min 5 s](https://harperz9.github.io/media/explainers/rederive/poster.jpg)](https://harperz9.github.io/explainers.html#rederive-h)
+
+**[Re-derive it. Don't take it on trust.](https://harperz9.github.io/explainers.html#rederive-h)** (2 min 5 s, narrated, captioned). Every Mneme recall carries a receipt you can re-run, the habit this film describes. The film page carries the transcript, the sources and recall questions.
+
+Video walkthrough: coming with the next release.
+
+## Walkthrough
+
+Install it, run it once, then use the main feature. Each command below is real, and so is its output.
+
+1. **Install.** Install from PyPI, or clone to run the tour. Python 3.11 or newer; no model and no network.
+
+   ```text
+   $ python -m pip install flywheel-mneme
+   $ git clone https://github.com/HarperZ9/mneme && cd mneme
+   ```
+
+2. **First run: the tour.** The tour stores a short conversation, recalls from it with a receipt, and shows a stale memory flagging itself.
+
+   ```text
+   $ python examples/tour.py
+   == 2. recall — with a receipt a third party can re-run ==
+       [1.783] I prefer tea over coffee and I work in data science.
+     re-ran the scorer: identical ranking (the recall is re-derivable)
+
+   == 3. drift — a memory whose source changes flags itself ==
+     before: MATCH
+     after a source changed: DRIFT (stale memory says so, it is not silently served)
+   ```
+
+3. **Recall with a receipt.** In your own code, a recall returns the ranked facts and a receipt that records how they were ranked.
+
+   ```text
+   >>> mem.recall("tea or coffee preference", strategy="keyword")
+   schema       mneme.recall/1
+   fusion       bm25
+   corpus_size  3
+   hit          04d7a310  bm25 1.7833  fused 1.7833
+                "I prefer tea over coffee and I work in data science."
+   def_sha256   a4aca2ec2ee49298...
+   ```
+
+4. **Forget, with a receipt.** Forgetting erases the text and leaves a tombstone that records what was removed and why.
+
+   ```text
+   >>> mem.forget("dffe9521d4a4ccfb", reason="user requested deletion")
+   status    erased
+   counts    turns 1, memories L1 1, collateral 0, duplicates 0
+   findings  []
+   audit     2 entries, chain_intact True
+   ```
+
 ## Why it matters
 
 Agent memory systems need evidence for two operational questions:

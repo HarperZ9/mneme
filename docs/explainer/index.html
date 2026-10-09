@@ -121,6 +121,14 @@ footer.foot p{max-width:70ch;margin:0 0 .6rem}
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{transition-duration:0s!important;animation-duration:0s!important;animation-iteration-count:1!important;scroll-behavior:auto!important}
 }
+.film{margin:1rem 0 0;max-width:56rem}
+.film video{width:100%;height:auto;display:block;background:#000;border:1px solid var(--line)}
+.film figcaption{font-size:.9rem;color:var(--ink-soft);margin-top:.55rem;max-width:44rem;line-height:1.5}
+.soon{font-family:var(--font-mono);font-size:.8rem;color:var(--muted);margin-top:.8rem}
+ol.walkthrough{padding-left:1.4rem;max-width:56rem;margin:1rem 0 0}
+ol.walkthrough li{margin:0 0 1.4rem}
+ol.walkthrough h3{margin:0 0 .3rem;font-size:1.05rem}
+ol.walkthrough p{margin:0 0 .3rem;max-width:44rem}
 
 /* generic scene kit: a pipeline strip, an input/output panel, a case picker, a table */
 .kscene{display:flex;flex-direction:column;gap:.8rem}
@@ -172,6 +180,18 @@ footer.foot p{max-width:70ch;margin:0 0 .6rem}
     <li><b>Erasure you can audit</b><code>forget</code> removes a memory and the turns behind it, and leaves a hash-chained tombstone.</li>
   </ul>
   <p class="src">Source: <a href="https://github.com/HarperZ9/mneme/blob/db3a8d4dba41786ee795621ade78d700eff6108e/README.md">README.md</a> at db3a8d4 (release 0.7.0)</p>
+</section>
+
+<section class="block wrap" aria-labelledby="watch">
+  <h2 id="watch">Watch</h2>
+  <figure class="film">
+    <video controls preload="none" playsinline crossorigin="anonymous" width="1920" height="1080" poster="https://harperz9.github.io/media/explainers/rederive/poster.jpg">
+      <source src="https://harperz9.github.io/media/explainers/rederive/rederive.mp4" type="video/mp4">
+      <track kind="captions" src="https://harperz9.github.io/media/explainers/rederive/rederive.vtt" srclang="en" label="English">
+    </video>
+    <figcaption><b>Re-derive it. Don&#x27;t take it on trust.</b> (2 min 5 s, narrated, captioned). Every Mneme recall carries a receipt you can re-run, the habit this film describes. <a href="https://harperz9.github.io/explainers.html#rederive-h">Transcript, sources and recall questions</a>.</figcaption>
+  </figure>
+  <p class="soon">Video walkthrough: coming with the next release.</p>
 </section>
 
 <section class="block wrap" aria-labelledby="how">
@@ -249,19 +269,37 @@ footer.foot p{max-width:70ch;margin:0 0 .6rem}
   </div>
 </section>
 
-<section class="block wrap" aria-labelledby="try">
-  <h2 id="try">Try it</h2>
-  <div class="measure"><p>Install from PyPI (Python 3.11 or newer) or run the tour from a checkout. It needs no model and no network.</p></div>
+<section class="block wrap" aria-labelledby="walkthrough">
+  <h2 id="walkthrough">Walkthrough</h2>
+  <p class="measure">Install it, run it once, then use the main feature. Each command below is real, and so is its output.</p>
+  <ol class="walkthrough">
+    <li><h3>Install</h3><p>Install from PyPI, or clone to run the tour. Python 3.11 or newer; no model and no network.</p>
 <pre class="cmd"><code>$ python -m pip install flywheel-mneme
-$ git clone https://github.com/HarperZ9/mneme && cd mneme
-$ python examples/tour.py
+$ git clone https://github.com/HarperZ9/mneme && cd mneme</code></pre></li>
+    <li><h3>First run: the tour</h3><p>The tour stores a short conversation, recalls from it with a receipt, and shows a stale memory flagging itself.</p>
+<pre class="cmd"><code>$ python examples/tour.py
 <span class="out">== 2. recall &#8212; with a receipt a third party can re-run ==
     [1.783] I prefer tea over coffee and I work in data science.
   re-ran the scorer: identical ranking (the recall is re-derivable)
 
 == 3. drift &#8212; a memory whose source changes flags itself ==
   before: MATCH
-  after a source changed: DRIFT (stale memory says so, it is not silently served)</span></code></pre>
+  after a source changed: DRIFT (stale memory says so, it is not silently served)</span></code></pre></li>
+    <li><h3>Recall with a receipt</h3><p>In your own code, a recall returns the ranked facts and a receipt that records how they were ranked.</p>
+<pre class="cmd"><code>>>> mem.recall(&quot;tea or coffee preference&quot;, strategy=&quot;keyword&quot;)
+<span class="out">schema       mneme.recall/1
+fusion       bm25
+corpus_size  3
+hit          04d7a310  bm25 1.7833  fused 1.7833
+             &quot;I prefer tea over coffee and I work in data science.&quot;
+def_sha256   a4aca2ec2ee49298...</span></code></pre></li>
+    <li><h3>Forget, with a receipt</h3><p>Forgetting erases the text and leaves a tombstone that records what was removed and why.</p>
+<pre class="cmd"><code>>>> mem.forget(&quot;dffe9521d4a4ccfb&quot;, reason=&quot;user requested deletion&quot;)
+<span class="out">status    erased
+counts    turns 1, memories L1 1, collateral 0, duplicates 0
+findings  []
+audit     2 entries, chain_intact True</span></code></pre></li>
+  </ol>
   <p class="src">Output excerpt from examples/tour.py at db3a8d4. flywheel-mneme 0.7.0 is the current release on PyPI.</p>
 </section>
 
