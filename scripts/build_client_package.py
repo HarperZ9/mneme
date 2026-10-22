@@ -138,7 +138,7 @@ def manifests(version, native):
     config = {'mcpServers': {TOOL: {'command': command, 'args': args, 'env': env, 'type': 'stdio'}}}
     plugin = {'name': TOOL + '-local', 'version': version,
               'description': DESCRIPTION,
-              'author': {'name': 'Zain Dana Harper'}, 'license': 'FSL-1.1-MIT'}
+              'author': {'name': 'Zain Dana Harper'}, 'license': 'AGPL-3.0-only'}
     claude_args = [arg.replace('${PLUGIN_ROOT}', '${CLAUDE_PLUGIN_ROOT}') for arg in args]
     claude_args.append('--memory-write=${user_config.memory_write}')
     claude = {'mcpServers': {TOOL: {'command': command.replace('${PLUGIN_ROOT}', '${CLAUDE_PLUGIN_ROOT}'),

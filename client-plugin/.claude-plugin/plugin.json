@@ -16,7 +16,7 @@
     "recall",
     "forgetting"
   ],
-  "license": "FSL-1.1-MIT",
+  "license": "AGPL-3.0-only",
   "name": "mneme-local",
   "privacyPolicyUrl": "https://harperz9.github.io/plugins/mneme/privacy.html",
   "repository": "https://github.com/HarperZ9/mneme",
