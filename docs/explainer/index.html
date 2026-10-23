@@ -195,7 +195,7 @@ ol.walkthrough p{margin:0 0 .3rem;max-width:44rem}
 
 <section class="block wrap" aria-labelledby="how">
   <h2 id="how">How it works, one step at a time</h2>
-  <p class="measure">Scroll, or use the step buttons. The panel follows one short conversation through mneme's own tour, <code>examples/tour.py</code>, which CI runs on every push. Every identifier, score and verdict is output from mneme at commit db3a8d4 with no model.</p>
+  <p class="measure">Scroll, or use the step buttons. The panel follows one short conversation through mneme's own tour, <code>examples/tour.py</code>, which CI runs on every push. Every identifier, score and verdict is output from mneme at commit db3a8d4, computed by plain code.</p>
   <div class="walk">
     <div class="stage-wrap">
       <div class="stage" aria-label="Animated diagram for the current step">
@@ -224,7 +224,7 @@ ol.walkthrough p{margin:0 0 .3rem;max-width:44rem}
       </div></li>
       <li class="step" tabindex="-1" data-scene="k1" data-state="s"><div class="card">
         <span class="num">02</span><h3>Three facts come out, each with its source</h3>
-        <p>The rule extractor turns the three user turns into three L1 facts. The assistant turn is context, not memory, so it yields none.</p>
+        <p>The rule extractor turns the three user turns into three L1 facts. The assistant turn is kept as context, and facts come from the user's turns.</p>
         <p>Each fact records the turn id it came from, the extractor <code>rule/v1</code>, the criterion and a SHA-256 of its content.</p>
         <p class="src">Source: <a href="https://github.com/HarperZ9/mneme/blob/db3a8d4dba41786ee795621ade78d700eff6108e/src/mneme/memory.py">src/mneme/memory.py</a>, <code>remember</code>; <a href="https://github.com/HarperZ9/mneme/blob/db3a8d4dba41786ee795621ade78d700eff6108e/src/mneme/extract.py">src/mneme/extract.py</a></p>
       </div></li>
@@ -237,7 +237,7 @@ ol.walkthrough p{margin:0 0 .3rem;max-width:44rem}
       <li class="step" tabindex="-1" data-scene="k3" data-state="s"><div class="card">
         <span class="num">04</span><h3>Re-run the recall to check it</h3>
         <p><code>verify_recall</code> runs the same scorer over the same rows and compares the result with the receipt. It returns True.</p>
-        <p>Change a score inside the receipt and it returns False, because the ranking is re-derived and never read from the receipt. Change a stored fact and it returns False too, because the store no longer reproduces. Pick each case in the panel.</p>
+        <p>Change a score inside the receipt and it returns False, because the ranking is re-derived from the stored rows. Change a stored fact and it returns False too, because the re-derived ranking now differs. Pick each case in the panel.</p>
         <p class="src">Source: <a href="https://github.com/HarperZ9/mneme/blob/db3a8d4dba41786ee795621ade78d700eff6108e/src/mneme/recall.py">src/mneme/recall.py</a>, <code>verify_recall</code></p>
       </div></li>
       <li class="step" tabindex="-1" data-scene="k4" data-state="s"><div class="card">
@@ -249,19 +249,19 @@ ol.walkthrough p{margin:0 0 .3rem;max-width:44rem}
       <li class="step" tabindex="-1" data-scene="k5" data-state="s"><div class="card">
         <span class="num">06</span><h3>The roll-up fails closed</h3>
         <p>Across a store, any DRIFT makes the whole report DRIFT. Otherwise any UNVERIFIABLE makes it UNVERIFIABLE. Only a clean sweep reports MATCH, and <code>mneme drift</code> exits 1 on drift.</p>
-        <p>A memory whose source was deleted is never rounded up to a match because nothing contradicted it. Missing evidence is reported as missing.</p>
+        <p>A memory whose source was deleted reads UNVERIFIABLE. Missing evidence is reported as missing, and MATCH needs a source that still agrees.</p>
         <p class="src">Source: README.md, "A drift check for source changes"</p>
       </div></li>
       <li class="step" tabindex="-1" data-scene="k6" data-state="s"><div class="card">
         <span class="num">07</span><h3>Forget, with a receipt</h3>
         <p><code>forget</code> erases a memory, the turns it came from and everything derived from them, in one transaction. Other memories from the same turn need your consent.</p>
-        <p>Erasing the shellfish fact removed one memory row and one source turn. The receipt's status is <code>erased</code> with no findings, and the audit log holds two tombstones with its chain intact.</p>
+        <p>Erasing the shellfish fact removed one memory row and one source turn. The receipt's status is <code>erased</code> with an empty findings list, and the audit log holds two tombstones with its chain intact.</p>
         <p class="src">Source: <a href="https://github.com/HarperZ9/mneme/blob/db3a8d4dba41786ee795621ade78d700eff6108e/src/mneme/erase.py">src/mneme/erase.py</a>, <code>forget_memory</code>; README.md, "Accountable forgetting"</p>
       </div></li>
       <li class="step" tabindex="-1" data-scene="k7" data-state="s"><div class="card">
         <span class="num">08</span><h3>A tombstone holds no text</h3>
         <p>Each erased row leaves one audit entry with a random erase ref, the hash of the row before erasure, the reason and the entry's own hash, chained to the one before.</p>
-        <p>The entry stores a salted commitment to the erased text, and the salt is not stored, so the log cannot confirm a guess of what was erased.</p>
+        <p>The entry stores a salted commitment to the erased text and discards the salt. Confirming a guess at the erased text would take that salt, so the log keeps the erasure private.</p>
         <p class="src">Source: README.md, "Accountable forgetting"; <a href="https://github.com/HarperZ9/mneme/blob/db3a8d4dba41786ee795621ade78d700eff6108e/src/mneme/audit_writer.py">src/mneme/audit_writer.py</a></p>
       </div></li>
     </ol>
@@ -272,7 +272,7 @@ ol.walkthrough p{margin:0 0 .3rem;max-width:44rem}
   <h2 id="walkthrough">Walkthrough</h2>
   <p class="measure">Install it, run it once, then use the main feature. Each command below is real, and so is its output.</p>
   <ol class="walkthrough">
-    <li><h3>Install</h3><p>Install from PyPI, or clone to run the tour. Python 3.11 or newer; no model and no network.</p>
+    <li><h3>Install</h3><p>Install from PyPI, or clone to run the tour. Python 3.11 or newer; it runs offline.</p>
 <pre class="cmd"><code>$ python -m pip install flywheel-mneme
 $ git clone https://github.com/HarperZ9/mneme && cd mneme</code></pre></li>
     <li><h3>First run: the tour</h3><p>The tour stores a short conversation, recalls from it with a receipt, and shows a stale memory flagging itself.</p>
@@ -303,12 +303,12 @@ audit     2 entries, chain_intact True</span></code></pre></li>
 </section>
 
 <section class="block wrap" aria-labelledby="limits">
-  <h2 id="limits">What it does not do</h2>
+  <h2 id="limits">Limits</h2>
   <ul class="limits">
-    <li>The default extractor is rule-based. It picks fact-shaped sentences by cue words and does not understand them; an LLM extractor is optional and sends text to its provider.</li>
-    <li>A recall receipt proves the ranking reproduces from the stored rows. It says nothing about whether the stored fact is true.</li>
-    <li>Drift compares sources with what was recorded at extraction. It cannot tell you a source was wrong from the start.</li>
-    <li>The check that a forget reason does not repeat erased text catches verbatim repeats only. A paraphrase passes.</li>
+    <li>The default extractor is rule-based: it picks fact-shaped sentences by cue words. An optional LLM extractor reads for meaning and sends text to its provider.</li>
+    <li>A recall receipt proves the ranking reproduces from the stored rows. The truth of a stored fact rests on its source.</li>
+    <li>Drift compares sources with what was recorded at extraction, so a source that was wrong from the start reads as a match.</li>
+    <li>The check that a forget reason leaves out the erased text catches verbatim repeats. A paraphrase passes it.</li>
     <li>Text you send through an LLM extractor, an embedder or an MCP client goes to that provider under its terms. The store itself stays on your machine.</li>
   </ul>
   <p class="src">Source: README.md at db3a8d4, "Install", "Accountability features" and "Accountable forgetting"</p>
@@ -317,10 +317,10 @@ audit     2 entries, chain_intact True</span></code></pre></li>
 <section class="block wrap recall" aria-labelledby="recall">
   <h2 id="recall">Check what stuck</h2>
   <p class="measure">Answer each one in your head before you open it.</p>
-  <details><summary>Why does the assistant's turn produce no fact?</summary><p>It is context. The extractor keeps atomic facts from the user's turns, so four turns give three facts.</p></details>
-  <details><summary>A receipt's score is edited but its scorer hash is left alone. What does verify_recall return, and why?</summary><p>False. It re-runs the scorer over the rows and compares the ranking, so a matching hash cannot carry an edited score.</p></details>
+  <details><summary>Four turns went in and three facts came out. Where did the assistant's turn go?</summary><p>It is context. The extractor keeps atomic facts from the user's turns, so four turns give three facts.</p></details>
+  <details><summary>A receipt's score is edited but its scorer hash is left alone. What does verify_recall return, and why?</summary><p>False. It re-runs the scorer over the rows and compares the ranking, so the edited score shows up as a mismatch whatever the hash says.</p></details>
   <details><summary>What is the difference between a source edited and a source deleted?</summary><p>An edited source re-hashes differently, so the memory reads DRIFT. A deleted source cannot be checked at all, so it reads UNVERIFIABLE.</p></details>
-  <details><summary>A store has one MATCH, one DRIFT and one UNVERIFIABLE memory. What does the report say?</summary><p>DRIFT. Any drift wins, then any unverifiable, and MATCH only on a clean sweep.</p></details>
+  <details><summary>A store has one MATCH, one DRIFT and one UNVERIFIABLE memory. What does the report say?</summary><p>DRIFT. Any drift wins, then any unverifiable, and MATCH needs every memory to match.</p></details>
 </section>
 </main>
 <footer class="foot wrap">
