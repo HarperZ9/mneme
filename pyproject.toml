@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "flywheel-mneme"
 version = "0.7.0"
-description = "Accountable agent memory with layered retrieval, source provenance, re-derivable recall receipts, and drift checks. Zero runtime dependencies."
+description = "Local memory for AI agents: each recalled fact names the turn it came from, and recall, drift checks and forgetting return receipts anyone can rerun."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "AGPL-3.0-only"

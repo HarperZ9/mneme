@@ -3,40 +3,60 @@
   <img src="https://raw.githubusercontent.com/HarperZ9/mneme/main/docs/art/hero-light.svg" alt="mneme: Agent memory with source provenance and re-derivable recall receipts. Layered rings drawn in fine lines, each slightly deformed, tighten around a bright core." width="100%">
 </picture>
 
-# mneme
+# Mneme
 
-Agent memory with source provenance and re-derivable recall receipts.
+Local memory for AI agents. Every recalled fact names the conversation turn it came from, and every recall, drift check and deletion returns a receipt you can rerun.
 
-```
-python -m pip install flywheel-mneme
-```
+## What it does for you
 
-[![version: 0.7.0](https://img.shields.io/badge/version-0.7.0-e6e1d6?style=flat-square&labelColor=1a1712)](https://pypi.org/project/flywheel-mneme/)
-[![CI](https://github.com/HarperZ9/mneme/actions/workflows/ci.yml/badge.svg)](https://github.com/HarperZ9/mneme/actions/workflows/ci.yml)
-[![license](https://img.shields.io/badge/license-AGPL--3.0--only-e6e1d6?style=flat-square&labelColor=1a1712)](https://github.com/HarperZ9/mneme/blob/main/LICENSE)
-![python 3.11+](https://img.shields.io/badge/python-3.11%2B-e6e1d6?style=flat-square&labelColor=1a1712)
+Mneme keeps what a user tells an agent in a SQLite file on your machine. It pulls fact-shaped sentences out of the user's turns, links each fact to the turn it came from, and ranks facts for a query with BM25. A recall returns the ranked facts with their scores and the ranking rule, so anyone holding the same database can rerun it and get the same order. `mneme drift` checks that the turns behind each fact are still present and unchanged. `mneme forget` deletes a fact and everything derived from it, and its receipt lists the copies it could not reach.
 
-> Accountable agent memory. Mneme records source provenance for stored
-> memories, returns recall receipts that reproduce ranking, and detects source
-> drift when checks run.
+Mneme is for developers who build agents and need to show why the agent remembered something, and for people who want an agent's memory in a file they control. You can use it as a Python library, a command-line tool or an MCP server for clients such as Claude Code and Codex. It needs only the Python standard library at run time. The store stays on your machine. Text you send through an optional model extractor, an embedder or an MCP client goes to that provider under its terms.
 
-## Install
+## Install and first run
 
-### Released v0.7.0 wheel
-
-The wheel provides memory, recall, drift, provenance, local-origin freshness, and MCP Crucible export/replay workflows. Forget removes a memory's raw turns and rows derived from them in the store, with a receipt naming what it cannot reach (see [Accountable forgetting](#accountable-forgetting)). Version 0.6.0 added self-contained Windows client packages with explicit memory permissions and state-bound snapshots. Version 0.7.0 adds opt-in navigation recall, which ranks only the memories a topic-outline walk reaches and records the walk in its receipt. The [CHANGELOG](CHANGELOG.md) lists the changes.
+Python 3.11 or newer. No model, API key or network connection is needed.
 
 ```bash
 python -m pip install flywheel-mneme
 ```
 
-`flywheel-mneme` is the HarperZ9 distribution, published with PEP 740 attestations. The bare name `mneme-memory` on PyPI belongs to an unrelated project.
+`flywheel-mneme` is the HarperZ9 distribution, published with PEP 740 attestations. The name `mneme-memory` on PyPI belongs to an unrelated project.
 
-To check the bytes yourself rather than trust the index, install the release wheel directly:
+Save two user turns as `turns.json`:
+
+```json
+[{"role": "user", "text": "I live in Denver and I prefer tea over coffee."},
+ {"role": "user", "text": "I work in data science."}]
+```
+
+Store them, recall, check the sources, then forget one fact:
+
+```text
+$ mneme --state mem.db remember chat turns.json --user alice
+  "atoms": 2, "extractor": "rule/v1", ...
+$ mneme --state mem.db recall "where do I live" --user alice
+[0.8380] I live in Denver and I prefer tea over coffee.
+[0.2145] I work in data science.
+$ mneme --state mem.db drift
+  "overall": "MATCH", "checked": 2, ...
+$ mneme --state mem.db forget e939caed0b8a0a4c --reason "user asked" --yes
+  "status": "erased", ...
+$ mneme --state mem.db recall "data science" --user alice
+(no memories matched)
+```
+
+The id `e939caed0b8a0a4c` comes from the `remember` output. It is a hash of the fact and its source turn, so your run prints the same one. Add `--json` to `recall` to see the full receipt. `mneme audit` shows the hash-chained log of every erase. `mneme bench` reruns the bundled token benchmark. To watch a fact flag itself as DRIFT after its source changes, clone this repository and run `python examples/tour.py`.
+
+### Released v0.7.0 wheel
+
+To check the bytes yourself, install the wheel attached to the GitHub release:
 
 ```bash
 python -m pip install "https://github.com/HarperZ9/mneme/releases/download/v0.7.0/flywheel_mneme-0.7.0-py3-none-any.whl"
 ```
+
+Version 0.7.0 adds opt-in navigation recall, which ranks only the memories a topic-outline walk reaches and records the walk in its receipt. The [CHANGELOG](CHANGELOG.md) lists every change.
 
 ### Source install
 
@@ -52,9 +72,19 @@ For a non-editable install from the public source repository:
 python -m pip install "flywheel-mneme @ git+https://github.com/HarperZ9/mneme.git"
 ```
 
-Zero runtime dependencies · local by default · deterministic · AGPL-3.0-only. The
-store stays on your machine; text you send through an LLM extractor, an
-embedder or an MCP client goes to that model's provider under its terms.
+## How it compares
+
+Mem0, Letta, Zep with its Graphiti engine, and LangMem are the agent memory tools most people look at first. They use a language model to extract and update memories, and they keep them in a vector store, a graph database or a hosted service. Mneme takes a smaller path: a rule-based extractor by default, BM25 ranking over one SQLite file, and an optional embedder or model extractor you plug in yourself.
+
+What Mneme adds is evidence you can check. `verify_recall` reruns a recall over the same rows and confirms the ranking. Every fact carries the hash of the turn it came from, and `drift` reports MATCH, DRIFT or UNVERIFIABLE when a source changes or disappears. A forget writes a hash-chained audit entry and a receipt that names what it could not erase.
+
+## Limits
+
+- The default extractor keeps whole user sentences that read like facts. It does not merge, summarize or resolve them the way a model-based extractor does.
+- Default ranking is keyword BM25, so a query that shares no words with a fact misses it: "coffee preference" does not find "I love dark roast." `--embed ngram` adds a local character n-gram channel, which is not a semantic embedding model.
+- A receipt shows that the ranking reproduces from the same rows. It does not show that a memory is true or that its source was accurate.
+- The bundled benchmark has 10 turns and 5 probes. Its 76.6% token reduction at 100% answer recall describes that set only.
+- Forget cannot reach copies outside the database: backups, text already sent to a model provider, and an MCP client's own history. The receipt lists them.
 
 ## See it work, step by step
 
@@ -160,8 +190,8 @@ assert verify_recall(r, rows, embedder=embed)   # re-derived from the store, not
 ```bash
 mneme remember chat session.json --user alice
 mneme recall "where does the user live" --user alice --json
-# -> {"schema":"mneme.recall/1","hits":[{"memory_id":"…","bm25":2.14,"fused":…}],
-#     "recheck":"mneme recall --query Q --state DB  (re-run the scorer, reproduce the ranking)"}
+# -> {"schema":"mneme.recall/1","hits":[{"memory_id":"…","bm25":…,"fused":…}],
+#     "recheck":"mneme recall \"where does the user live\" --strategy hybrid … --user alice  (re-run over the same store, reproduce the ranking)"}
 ```
 
 **A drift check for source changes.** `drift` re-derives every memory's
@@ -209,7 +239,7 @@ mem = AgentMemory("mem.db")                       # or ":memory:"
 mem.remember("chat", [{"role": "user", "text": "I live in Denver and love dark roast."}],
              user="alice")
 
-receipt = mem.recall("coffee preference", user="alice")  # RecallReceipt, re-derivable
+receipt = mem.recall("dark roast", user="alice")  # RecallReceipt, re-derivable
 print(mem.drift()["overall"])                     # MATCH until a source changes
 ```
 
