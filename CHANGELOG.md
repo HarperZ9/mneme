@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Licence: future releases are AGPL-3.0-only. Published releases up to 0.7.0 keep their FSL-1.1-MIT terms and still convert to MIT two years after each release.
+
 ## 0.7.0, 2026-10-03
 
 - Opt-in navigation recall: `AgentMemory.navigate` walks a deterministic topic outline and ranks only the memories it reaches, and the receipt records every branch scored and followed. `verify_navigation` replays a receipt from the rows. On the fixed 50-query bench it held recall@5 at 0.84 against flat recall's 0.86 while ranking 42 of 120 memories per query. A random-outline control over 20 seeds holds recall about as well, so the walk earns the gain and the topic structure is not shown to. Details and the bar set before the run: `docs/navigation-recall.md`.

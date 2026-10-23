@@ -3,7 +3,7 @@
     "name": "Zain Dana Harper"
   },
   "description": "Local memory in a SQLite file you choose, with provenance on every recalled memory.",
-  "license": "FSL-1.1-MIT",
+  "license": "AGPL-3.0-only",
   "mcpServers": "./mcp.json",
   "name": "mneme-local",
   "skills": "./skills/",

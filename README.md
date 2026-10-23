@@ -13,7 +13,7 @@ python -m pip install flywheel-mneme
 
 [![version: 0.7.0](https://img.shields.io/badge/version-0.7.0-e6e1d6?style=flat-square&labelColor=1a1712)](https://pypi.org/project/flywheel-mneme/)
 [![CI](https://github.com/HarperZ9/mneme/actions/workflows/ci.yml/badge.svg)](https://github.com/HarperZ9/mneme/actions/workflows/ci.yml)
-[![license](https://img.shields.io/badge/license-FSL--1.1--MIT-e6e1d6?style=flat-square&labelColor=1a1712)](https://github.com/HarperZ9/mneme/blob/main/LICENSE)
+[![license](https://img.shields.io/badge/license-AGPL--3.0--only-e6e1d6?style=flat-square&labelColor=1a1712)](https://github.com/HarperZ9/mneme/blob/main/LICENSE)
 ![python 3.11+](https://img.shields.io/badge/python-3.11%2B-e6e1d6?style=flat-square&labelColor=1a1712)
 
 > Accountable agent memory. Mneme records source provenance for stored
@@ -52,7 +52,7 @@ For a non-editable install from the public source repository:
 python -m pip install "flywheel-mneme @ git+https://github.com/HarperZ9/mneme.git"
 ```
 
-Zero runtime dependencies · local by default · deterministic · fair-source. The
+Zero runtime dependencies · local by default · deterministic · AGPL-3.0-only. The
 store stays on your machine; text you send through an LLM extractor, an
 embedder or an MCP client goes to that model's provider under its terms.
 
@@ -563,7 +563,13 @@ Use synthetic SQLite state for tests and examples. `mneme mcp` reads `MNEME_STAT
 
 ## License
 
-Mneme is fair-source: open to read, run, and build on, with commercial use reserved so the project can fund its own development. See [LICENSE](LICENSE).
+Mneme is free software under the GNU Affero General Public License, version 3 only
+(AGPL-3.0-only). See [LICENSE](LICENSE) and [NOTICE](NOTICE). Anyone may use, study, change
+and share it. Anyone who distributes a changed copy, or runs one as a service people
+use over a network, must offer those people its source under the same licence.
+
+Releases up to and including 0.7.0 were published under FSL-1.1-MIT. They keep those
+terms, and each converts to the MIT license two years after its release.
 
 ## What this believes
 
