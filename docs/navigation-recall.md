@@ -25,7 +25,7 @@ This bar was committed before the navigator existed, against the fixed corpus in
 
 - **B1, recall.** Navigation recall@5 is at least flat keyword recall@5 minus 0.04. That allows at most 2 of 50 queries lost.
 - **B2, memories examined.** The mean number of memories the navigator reaches per query is at most 60, half the corpus.
-- **Control.** The same walk over an outline with memories dealt to random leaves must miss B1. If a random outline also passes, the outline is doing no work and the result does not count.
+- **Control.** The same walk over an outline with memories dealt to random leaves must fall below B1. The result counts when the topic outline passes B1 and the random outline falls below it.
 - **Ship rule.** The mode ships opt-in whatever the result. The numbers below are reported either way, and flat recall stays the default.
 
 ## Results
@@ -38,14 +38,14 @@ Run on 2026-10-03, seed 20261003, top 5.
 | Navigation recall | 0.84 (42 of 50) | 0.72 to 0.92 | 41.9 |
 | Random outline, seed 20261003 | 0.76 (38 of 50) | 0.63 to 0.86 | 43.5 |
 
-- **B1 passes.** Navigation loses one query flat recall answers ("what music plays while working") and gains none.
+- **B1 passes.** Flat recall answers 43 queries and navigation answers 42 of those same queries; the one it loses is "what music plays while working".
 - **B2 passes.** The walk ranks 35% of the corpus on average.
 - **The pre-stated control misses B1**, so by the stated rule the result counts.
 
 **The topic structure is not shown to be doing the work.** After the pre-stated run I repeated the random-outline control over 20 seeds (seeds 0 to 19). Mean recall@5 was 0.848, range 0.78 to 0.86, and most seeds pass B1. The seed named in the bar was one of the unlucky ones. The likely cause: each branch is scored on the full text of its memories, so the branch that holds a rare query term wins wherever that memory sits. A walk over any partition of this size finds it. The reduction in memories ranked is real; the claim that a topic outline earns it is not supported.
 
-An exploratory variant, run after the bar and not part of it, scored each branch on its 8 or 16 most shared terms in place of its full text, which is closer to reading an outline. Recall@5 fell to 0.62 and 0.64. Reading summaries alone loses too much on this corpus.
+An exploratory variant, run after the bar and outside it, scored each branch on its 8 or 16 most shared terms in place of its full text, which is closer to reading an outline. Recall@5 fell to 0.62 and 0.64, so on this corpus branch scoring needs the full text.
 
 ## Limits
 
-The corpus is synthetic and written by the same author as the navigator, so it does not show how the walk behaves on real memory stores. A pass shows the walk can hold recall while ranking fewer memories on short, topic-clustered facts. It does not show a speed gain or a saving in text read: the outline build reads every memory once, and branch scoring reads each branch's full text.
+The corpus is synthetic and written by the same author as the navigator; behaviour on real memory stores is still to be measured. A pass shows the walk can hold recall while ranking fewer memories on short, topic-clustered facts. The text read stays the same size, because the outline build reads every memory once and branch scoring reads each branch's full text, so a speed gain is untested.
