@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Adds `SECURITY.md`: supported versions, private reporting through GitHub security advisories, and the trust model for the database, the optional network edges and the MCP server. `.gitignore` now also excludes `.envrc`, `.envrc.local` and `CLAUDE.local.md`.
 - Licence: future releases are AGPL-3.0-only. Published releases up to 0.7.0 keep their FSL-1.1-MIT terms and still convert to MIT two years after each release.
 
 ## 0.7.0, 2026-10-03

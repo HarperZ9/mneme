@@ -23,3 +23,8 @@ mneme.db
 .DS_Store
 Thumbs.db
 *.swp
+
+# local env loaders and private agent notes
+.envrc
+.envrc.local
+CLAUDE.local.md
