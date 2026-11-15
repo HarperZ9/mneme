@@ -10,9 +10,11 @@ later erase. From schema 5 each value is a commitment
 with a fresh 32-byte salt. The salt is kept in the `salts` table under the
 memory the value describes, so while the memory lives its owner can open the
 history (`opens`). An erase deletes those salts in the same transaction as the
-rows, and the commitments then open to nothing. The entries still name the
-memory by its content-derived id, which can confirm a guessed text when its
-source turn id is known; the erase receipt counts such rows. A row-level
+rows, and the commitments then open to nothing. From schema 6 an entry names
+the memory by a random alias (`alias`, kept in the `aliases` table while the
+memory lives) and never by its content-derived id, which could confirm a
+guessed text; an erase deletes the alias. Rows written before schema 6 keep
+the id, and the erase receipt reports them as a finding. A row-level
 forget deletes the row, so its tombstone salt is never stored and the row's
 earlier salts go too. When consolidation merges a row away, the same
 transaction records the merge link (kept id, dropped id, dropped sources).
@@ -37,6 +39,33 @@ from .receipt import memory_hash
 
 BLIND_TAG = b"mneme.audit-blind.v1"
 BLIND_PREFIX = "b1:"
+ALIAS_PREFIX = "am_"
+
+
+def alias(conn: sqlite3.Connection, memory_id: str) -> str:
+    """The random name audit rows use for this memory, made on first use. No commit."""
+    row = conn.execute("SELECT alias FROM aliases WHERE memory_id=?",
+                       (memory_id,)).fetchone()
+    if row is not None:
+        return row[0]
+    name = ALIAS_PREFIX + secrets.token_hex(12)
+    conn.execute("INSERT INTO aliases(memory_id, alias) VALUES(?,?)", (memory_id, name))
+    return name
+
+
+def drop_aliases(conn: sqlite3.Connection, memory_ids: Iterable[str]) -> int:
+    """Delete the aliases of these memories; their audit rows then name no one."""
+    deleted = 0
+    for memory_id in memory_ids:
+        deleted += conn.execute("DELETE FROM aliases WHERE memory_id=?",
+                                (memory_id,)).rowcount
+    return deleted
+
+
+def live_ids(conn: sqlite3.Connection) -> dict[str, str]:
+    """alias -> memory id, for the memories that still have one."""
+    return {name: memory_id for memory_id, name in
+            conn.execute("SELECT memory_id, alias FROM aliases")}
 
 
 def is_blinded(value: str) -> bool:
@@ -103,8 +132,8 @@ def supersede(store, old_id: str, new_id: str, reason: str = "") -> dict | None:
         conn.execute("UPDATE memories SET valid_until=?, superseded_by=? WHERE id=?",
                      (at, new_id, old_id))
         before = record(conn, old_id, row["content_sha256"])
-        return audit_writer.append(conn, "supersede", old_id, row["layer"], before, "",
-                                   reason or "superseded")
+        return audit_writer.append(conn, "supersede", alias(conn, old_id), row["layer"],
+                                   before, "", reason or "superseded")
     return _atomically(conn, change)
 
 
@@ -121,7 +150,7 @@ def update(store, memory_id: str, new_text: str, reason: str = "") -> dict | Non
                      (new_text, after_sha, memory_id))
         before = record(conn, memory_id, row["content_sha256"])
         after = record(conn, memory_id, after_sha)
-        return audit_writer.append(conn, "update", memory_id, row["layer"],
+        return audit_writer.append(conn, "update", alias(conn, memory_id), row["layer"],
                                    before, after, reason)
     return _atomically(conn, change)
 
@@ -140,6 +169,8 @@ def forget(store, memory_id: str, reason: str = "", *,
         if merged_into is not None:
             conn.execute("INSERT OR REPLACE INTO merges(dropped_id, kept_id, source_ids) "
                          "VALUES(?,?,?)", (memory_id, merged_into, row["source_ids"]))
-        return audit_writer.append(conn, "forget", memory_id, row["layer"],
+        name = alias(conn, memory_id)
+        drop_aliases(conn, (memory_id,))
+        return audit_writer.append(conn, "forget", name, row["layer"],
                                    unopenable(row["content_sha256"]), "", reason)
     return _atomically(conn, change)

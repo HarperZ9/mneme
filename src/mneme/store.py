@@ -290,14 +290,14 @@ class Store:
 
     # -- L0 turns ------------------------------------------------------------
     def add_turn(self, turn_id: str, session: str, role: str, text: str,
-                 origin: dict | None = None) -> str:
+                 origin: dict | None = None, user: str | None = None) -> str:
         from .receipt import content_hash
         sha = content_hash(role, text)
         self.conn.execute(
-            "INSERT OR REPLACE INTO turns(id,session,role,text,ord,content_sha256,origin) "
-            "VALUES(?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO turns(id,session,role,text,ord,content_sha256,origin,"
+            '"user") VALUES(?,?,?,?,?,?,?,?)',
             (turn_id, session, role, text, self._next_ord(), sha,
-             json.dumps(origin) if origin else ""))
+             json.dumps(origin) if origin else "", user))
         self.conn.commit()
         return turn_id
 

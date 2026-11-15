@@ -97,6 +97,7 @@ def from_gather(memory, items: list[dict], session: str,
                 turn.role,
                 turn.text,
                 origin=turn.origin,
+                user=user,
             )
     receipts = []
     for aid, atom in atoms:

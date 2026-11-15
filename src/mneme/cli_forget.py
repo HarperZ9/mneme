@@ -6,7 +6,9 @@ previews) and tenant names are shown only when stdout is a terminal or
 model context and reach its provider. `--dry-run` plans through a read-only
 connection and changes nothing, not even an older database's schema stamp.
 Without --yes the command asks; with --yes it still refuses collateral and
-duplicates until --allow-collateral says the caller saw them.
+duplicates until --allow-collateral says the caller saw them. A forget also
+removes the export files mneme wrote that hold an erased row
+(erase_exports.py) unless --keep-exports is given.
 `--emit-opening` prints the salt of each erase commitment once. The salts are
 never stored, and an opening lets anyone holding the audit log confirm a
 guess of the erased text, so the flag works only when stdout is a terminal:
@@ -41,6 +43,10 @@ from .memory import AgentMemory
 from .store import Store
 
 CLEAN = ("erased", "erased_sources_kept")
+COST = ("After the rows are deleted, mneme overwrites the erase's rollback journal, "
+        "rewrites the whole database file (VACUUM), removes replay snapshots and "
+        "exports that hold an erased row, and scans the files for erased bytes, so "
+        "a forget is not instant: about 2 seconds on a store of 10,000 memories on the development machine, longer on a larger store.")
 
 
 def _interactive() -> bool:
@@ -71,8 +77,9 @@ def _print(value: dict) -> None:
 def add_parsers(sub) -> None:
     fg = sub.add_parser(
         "forget", help="erase a memory, turn or session and everything derived from it",
-        description="Plan, confirm and apply a true forget. Exit 0 applied, 1 refused, "
-                    "2 missing, 3 applied with residue, copies or an unfinished check.")
+        description="Plan, confirm and apply a true forget. " + COST + " Exit 0 applied, "
+                    "1 refused, 2 missing, 3 applied with residue, copies or an "
+                    "unfinished check.")
     fg.add_argument("target", help="a memory id, or a turn id with --turn, or a session "
                                    "name with --session")
     kind = fg.add_mutually_exclusive_group()
@@ -88,6 +95,10 @@ def add_parsers(sub) -> None:
     mode.add_argument("--yes", action="store_true", help="apply without asking")
     fg.add_argument("--allow-collateral", action="store_true",
                     help="with --yes, also erase collateral and duplicate rows")
+    fg.add_argument("--keep-exports", action="store_true",
+                    help="leave files written by `inspect --out` and `replay-crucible "
+                         "--out` in place; without it, a forget removes the ones that "
+                         "hold an erased row and are unchanged since mneme wrote them")
     fg.add_argument("--show-text", action="store_true",
                     help="show row text in the plan even when stdout is not a terminal")
     fg.add_argument("--plan-sha256", default=None,
@@ -142,7 +153,8 @@ def _confirmed(plan: dict, args) -> bool:
 def _apply(memory: AgentMemory, args, selection: Selection, plan: dict) -> int:
     try:
         receipt = apply_erase(memory.store, selection, args.plan_sha256 or plan["plan_sha256"],
-                              reason=args.reason, emit_openings=args.emit_opening)
+                              reason=args.reason, emit_openings=args.emit_opening,
+                              keep_exports=args.keep_exports)
     except (StalePlanError, ErasedTextInReasonError, LookupError, ValueError,
             RuntimeError, sqlite3.Error) as exc:
         print(f"forget refused: {exc}", file=sys.stderr)

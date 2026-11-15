@@ -11,12 +11,14 @@ terminal; the MCP tool never does).
 `findings` lists a code for every check that did not pass, and `status` is
 `erased` only when `findings` is empty. Otherwise it is the first of:
 
-- `erased_residue_found`: rows still present, a scrub step failed, a
+- `erased_residue_found`: rows still present, an audit row written before
+  schema 6 names an erased row by its content-derived id, a scrub step failed, a
   snapshot could not be removed, the scan found erased bytes, a kept row
   repeats an erased text whole, holds a short one or shares a 16-character
   run with a long one, an audit reason quotes one, or a merged-away
   duplicate's source cannot be found;
-- `erased_copies_remain`: a known copy outside the store (a legacy temp
+- `erased_copies_remain`: a registered export still holds an erased row
+  (erase_exports.py), or a known copy outside the store (a legacy temp
   snapshot, another store's snapshot, a snapshot removed while its process
   still ran) holds erased text;
 - `incomplete`: a store file or a known copy could not be read;
@@ -32,7 +34,7 @@ import logging
 import sqlite3
 from pathlib import Path
 
-from . import erase_outside, erase_residue, snapshot_dir
+from . import erase_exports, erase_outside, erase_residue, snapshot_dir
 from .erase_scan import scan_paths
 
 RECEIPT_SCHEMA = "mneme.erase-receipt/1"
@@ -104,17 +106,32 @@ def _merge_counts(first: dict | None, second: dict) -> dict:
             for k in ("removed", "failed", "removed_while_live")}
 
 
-def freed_clusters_note(scrub: dict) -> str:
-    """What the freed disk blocks may hold, from what the scrub did."""
-    journal = ("write-ahead log" if scrub.get("journal_mode") == "wal"
-               else "rollback journal")
+_JOURNAL_NOTES = {
+    "overwritten": "the rollback journal of the erase was overwritten with zeros "
+                   "before SQLite removed it",
+    "not_overwritten_wal": "the write-ahead log was checkpointed and truncated, not "
+                           "overwritten, so its freed disk blocks can hold erased "
+                           "bytes until the file system reuses them",
+    "overwrite_failed": "the rollback journal of the erase could not be overwritten "
+                        "before SQLite removed it, so its freed disk blocks can hold "
+                        "erased bytes until the file system reuses them",
+}
+
+
+def freed_clusters_note(scrub: dict, journal_file: str | None = None) -> str:
+    """What the freed disk blocks may hold, from what the erase and scrub did."""
     if scrub.get("vacuum") == "done":
         start = "SQLite rewrote and shrank the database file"
     else:
         start = "The VACUUM did not finish, so SQLite did not rewrite the database file"
-    return (f"{start}; its {journal} and the replay snapshots mneme deleted with a "
-            "plain unlink leave disk blocks that are not overwritten and can hold "
-            "erased bytes until the file system reuses them")
+    if journal_file is None:
+        journal_file = ("not_overwritten_wal" if scrub.get("journal_mode") == "wal"
+                        else "overwrite_failed")
+    journal = _JOURNAL_NOTES.get(journal_file, "the erase left no journal file")
+    return (f"{start}; {journal}; replay snapshots and exports mneme removed were "
+            "overwritten with zeros first. An overwrite replaces the blocks a "
+            "conventional file system keeps for a file; a solid-state drive, a "
+            "copy-on-write or snapshotting file system can keep an older copy")
 
 
 def _residue(conn, work: dict, scan: dict, scrub: dict, file_backed: bool) -> dict:
@@ -132,13 +149,15 @@ def _residue(conn, work: dict, scan: dict, scrub: dict, file_backed: bool) -> di
                                         "rows the store keeps"},
                "schema_downgrade": erase_residue.schema_downgrade(conn)}
     if file_backed:
-        residue["freed_clusters"] = {"note": freed_clusters_note(scrub)}
+        residue["freed_clusters"] = {
+            "note": freed_clusters_note(scrub, work.get("journal_file"))}
     return residue
 
 
-def _findings(structural, scrub, snapshots, scan, residue, outside) -> list[str]:
+def _findings(structural, scrub, snapshots, scan, residue, outside, exports) -> list[str]:
     held, unchecked = erase_outside.copies_found(outside)
     checks = [
+        (residue["legacy_audit_rows"]["count"], "audit_rows_name_erased_ids"),
         (not structural["rows_absent"], "rows_present"),
         ("remedy" in scrub, "scrub_incomplete"),
         (snapshots["failed"], "snapshot_removal_failed"),
@@ -149,15 +168,18 @@ def _findings(structural, scrub, snapshots, scan, residue, outside) -> list[str]
         (residue["audit_reasons_with_erased_text"]["count"], "audit_reasons_quote_erased_text"),
         (residue["unresolved_merged_sources"]["count"], "unresolved_merged_sources"),
         (held, "copies_hold_erased_text"),
+        (exports["holding_erased_rows"], "exports_hold_erased_rows"),
         (snapshots["removed_while_live"], "snapshot_removed_while_live"),
         (scan["status"] == "incomplete", "scan_incomplete"),
         (unchecked, "copies_unchecked"),
+        (exports["unchecked"], "exports_unchecked"),
         (residue["kept_sources"]["rows"], "sources_kept"),
     ]
     return [name for failed, name in checks if failed]
 
 
-_STATUS_OF = {"rows_present": 0, "scrub_incomplete": 0, "snapshot_removal_failed": 0,
+_STATUS_OF = {"audit_rows_name_erased_ids": 0, "exports_hold_erased_rows": 1,
+              "exports_unchecked": 2, "rows_present": 0, "scrub_incomplete": 0, "snapshot_removal_failed": 0,
               "scan_hits": 0, "kept_rows_repeat_erased_text": 0,
               "kept_rows_contain_short_text": 0, "kept_rows_share_erased_run": 0,
               "audit_reasons_quote_erased_text": 0, "unresolved_merged_sources": 0,
@@ -178,13 +200,15 @@ def build_receipt(store, work: dict, scrub: dict, *, reason: str,
     snapshots = _merge_counts(work.get("snapshots_before"), remove_snapshots(conn, db))
     kept = kept_values(conn)
     scan = _scan(db, work["texts"], kept)
+    exports = work.get("exports") or erase_exports.purge(None, None, (), ())
     structural = {"rows_absent": rows_absent(conn, plan),
                   "salts_deleted": work["salts_deleted"],
+                  "journal_file": work.get("journal_file", "no_journal_file"),
                   **{k: scrub[k] for k in ("freelist_count", "journal", "wal_bytes")}}
     residue = _residue(conn, work, scan, scrub, db is not None)
     outside = erase_outside.out_of_reach(snapshot_dir.store_id_of(conn), db,
                                          work["texts"], kept)
-    findings = _findings(structural, scrub, snapshots, scan, residue, outside)
+    findings = _findings(structural, scrub, snapshots, scan, residue, outside, exports)
     receipt = {
         "schema": RECEIPT_SCHEMA, "status": status_of(findings), "findings": findings,
         "reason": reason,
@@ -193,6 +217,7 @@ def build_receipt(store, work: dict, scrub: dict, *, reason: str,
                        for o in work["openings"]],
         "scrub": {k: v for k, v in scrub.items() if k not in structural},
         "structural": structural, "scan": scan, "snapshots": snapshots,
+        "exports": exports,
         "residue": residue, "out_of_reach": outside,
     }
     if emit_openings:
@@ -204,6 +229,7 @@ def rows_absent(conn: sqlite3.Connection, plan: dict) -> bool:
     for table, column, ids in (("memories", "id", plan["memories"]),
                                ("turns", "id", plan["turns"]),
                                ("salts", "subject_id", plan["memories"]),
+                               ("aliases", "memory_id", plan["memories"]),
                                ("merges", "kept_id", plan["memories"])):
         for item in ids:
             if conn.execute(f"SELECT 1 FROM {table} WHERE {column}=?",

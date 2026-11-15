@@ -127,13 +127,17 @@ def test_erase_deletes_the_salts_so_the_history_links_to_nothing(tmp_path):
     assert receipt["structural"]["rows_absent"] is True
     assert not audit_blind.opens(conn, rows[0]["before_sha"], versions[0][1])
     legacy = receipt["residue"]["legacy_audit_rows"]
-    assert legacy["count"] == 2 and legacy["blinded"] == 2
+    # schema 6: the two earlier rows name a random alias, so none names the erased id
+    assert legacy["count"] == 0 and legacy["blinded"] == 0
     assert legacy["unsalted_hashes"] == 0
+    assert "audit_rows_name_erased_ids" not in receipt["findings"]
+    assert conn.execute("SELECT COUNT(*) FROM aliases").fetchone()[0] == 0
     assert memory.audit()["chain_intact"] is True
     memory.close()
     data = db.read_bytes()
     assert not [s for s in salts if s.encode("ascii") in data or bytes.fromhex(s) in data]
     assert successor.encode("ascii") not in data
+    assert atom.encode("ascii") not in data
     proc = subprocess.run([sys.executable, str(VERIFIER), str(db)],
                           capture_output=True, text=True, timeout=60)
     assert proc.returncode == 0 and proc.stdout.startswith("MATCH"), proc.stdout

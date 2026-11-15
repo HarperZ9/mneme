@@ -16,18 +16,21 @@ from mneme.cli import main
 from mneme.state_report import describe
 
 
-def test_the_042_database_migrates_to_schema_5_without_a_warning(legacy_042_db):
+def test_the_042_database_migrates_to_schema_6_without_a_warning(legacy_042_db):
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         memory = AgentMemory(legacy_042_db)
 
-    assert memory.store._meta_get("schema_version") == "5"
-    assert memory.store._meta_get("schema_high_water") == "5"
+    assert memory.store._meta_get("schema_version") == "6"
+    assert memory.store._meta_get("schema_high_water") == "6"
     assert memory.audit()["chain_intact"] is True
     memory.close()
     tables = {r[0] for r in sqlite3.connect(legacy_042_db).execute(
         "SELECT name FROM sqlite_master WHERE type='table'")}
-    assert {"salts", "merges"} <= tables
+    assert {"salts", "merges", "aliases"} <= tables
+    columns = {r[1] for r in sqlite3.connect(legacy_042_db).execute(
+        'PRAGMA table_info("turns")')}
+    assert "user" in columns
 
 
 def test_its_earlier_update_and_supersede_rows_are_counted_as_unsalted(legacy_042_db):
@@ -37,8 +40,12 @@ def test_its_earlier_update_and_supersede_rows_are_counted_as_unsalted(legacy_04
 
     receipt = memory.forget(denver, reason="user asked", allow_collateral=True)
 
+    # the 0.4.2 row names the memory by its content-derived id and keeps an
+    # unsalted hash; the update written now names an alias, so it is not counted
     legacy = receipt["residue"]["legacy_audit_rows"]
-    assert legacy == {**legacy, "count": 2, "unsalted_hashes": 1, "blinded": 1}
+    assert legacy == {**legacy, "count": 1, "unsalted_hashes": 1, "blinded": 0}
+    assert "audit_rows_name_erased_ids" in receipt["findings"]
+    assert receipt["status"] == "erased_residue_found"
     memory.close()
 
 

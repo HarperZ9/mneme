@@ -275,8 +275,14 @@ per-user state directory, `<LocalAppData>/mneme/snapshots` on Windows and
 elsewhere, never beside the database. `mneme status` counts them. `forget`
 and `mneme scrub` delete the copies of their store, and snapshots whose
 process is gone are swept when a store opens for writing, when the MCP server
-starts, and when a snapshot is made. A delete is a plain unlink, so the disk
-blocks can keep the bytes until the file system reuses them.
+starts, and when a snapshot is made. Mneme writes zeros over a snapshot before
+it unlinks it, so the freed disk blocks hold no memory text on a file system
+that overwrites in place.
+
+Files you export are tracked too. `mneme inspect --out` and `mneme
+replay-crucible --out` record the path and SHA-256 of what they wrote in
+`exports.jsonl` in the same snapshot directory, so a later `forget` can find
+those copies.
 
 Mneme keeps everything above on your machine. What leaves it is what you send:
 turns given to an LLM extractor or an embedder go to that model's provider,
@@ -431,10 +437,24 @@ a key or a PIN), is itself a short piece of it, or names an erased row's id
 or content hash. The check catches verbatim repeats only: a paraphrase or a
 spaced-out spelling passes.
 
-The rows go in one transaction with `secure_delete` on. After the commit,
-mneme removes this store's replay snapshots, vacuums the file, and scans the
-database files and known copies for the erased bytes. A refused erase (a stale
-plan, a refused reason) changes nothing, snapshots included.
+The rows go in one transaction with `secure_delete` on. In a rollback-journal
+database (SQLite's default) the journal of that transaction holds the old
+pages, so mneme keeps it through the commit, writes zeros over it, and only
+then lets SQLite remove it. After the commit, mneme overwrites and removes
+this store's replay snapshots, removes the export files it wrote that hold an
+erased row, vacuums the file, and scans the database files and known copies
+for the erased bytes. A refused erase (a stale plan, a refused reason) changes
+nothing, snapshots and exports included.
+
+An export is removed only when it still has the SHA-256 mneme recorded for it,
+which shows it is byte for byte the file mneme wrote. An export you edited
+since is left in place and reported (`exports_hold_erased_rows`), and
+`--keep-exports` leaves every export and reports the same way.
+
+A forget is not instant. The VACUUM rewrites the whole database file and the
+scan reads it, so the time grows with the store: on a store of 10,000
+memories (8.5 MB) one forget took about 2 seconds on the development machine, where
+0.7.0 took about 12.
 
 The receipt has a `status` and a list of `findings`. `findings` holds a code
 for each check that did not pass, and `status` is `erased` only when the list
@@ -455,10 +475,13 @@ maps to one status:
 | `kept_rows_share_erased_run` | `erased_residue_found` | a kept row shares a 16-character run with a longer erased text |
 | `audit_reasons_quote_erased_text` | `erased_residue_found` | an audit reason quotes erased text or holds one of its tokens with a digit |
 | `unresolved_merged_sources` | `erased_residue_found` | an older mneme merged a near-duplicate away without a link, so its source turn may remain |
+| `audit_rows_name_erased_ids` | `erased_residue_found` | an audit row written before schema 6 names an erased row by its content-derived id, which can confirm a guess of the erased text |
 | `copies_hold_erased_text` | `erased_copies_remain` | a legacy temp snapshot or another store's snapshot holds erased text |
+| `exports_hold_erased_rows` | `erased_copies_remain` | an export file mneme wrote holds an erased row and was left in place: you edited it since, or you passed `--keep-exports` |
 | `snapshot_removed_while_live` | `erased_copies_remain` | a snapshot was removed while its process ran, which can keep reading it on POSIX |
 | `scan_incomplete` | `incomplete` | a store file could not be read |
 | `copies_unchecked` | `incomplete` | a known copy could not be read, or is over the 1 GiB cap |
+| `exports_unchecked` | `incomplete` | a registered export, or the export registry, could not be read |
 | `sources_kept` | `erased_sources_kept` | you kept the source turns (`--keep-sources`) |
 | `post_commit_failure` | `erased_unverified` | a step after the commit raised |
 
@@ -472,23 +495,58 @@ structural checks only: its rows are gone, no kept row repeats it whole, and,
 when it has 8 or more characters, no kept row holds it as a word. For such a
 text `erased` means the rows are gone, not that a byte scan found nothing.
 
-The receipt also names what an erase cannot remove. Audit rows written
-earlier still name the erased rows by content-derived id, and such an id
-confirms a guessed text when its source turn id is known. The disk blocks
-SQLite released, and those of deleted snapshots, can hold old bytes until they
-are reused. Exports, backups, other copies of the database file, text already
-sent to a model provider, and the MCP client's own session history, which
-keeps every result it read, are out of its reach.
+The receipt also names what an erase cannot remove. A write-ahead log is
+checkpointed and truncated, not overwritten, so its freed disk blocks can hold
+old bytes until they are reused. An overwrite replaces the blocks a
+conventional file system keeps for a file; a solid-state drive that remaps
+blocks, or a copy-on-write or snapshotting file system, can keep an older
+copy. Exports written before mneme kept the registry, exports you moved or
+copied, output a shell redirected to a file, backups, other copies of the
+database file, text already sent to a model provider, and the MCP client's own
+session history, which keeps every result it read, are out of its reach.
+
+### Erase everything about one user
+
+```bash
+mneme forget-subject alice --dry-run                     # counts, nothing deleted
+mneme forget-subject alice --reason "request 41" --yes   # erase, print the receipt
+mneme verify-erasure receipt.json                        # check a saved receipt
+```
+
+`forget-subject` (library: `AgentMemory.forget_subject`) erases every memory
+of one user in every layer and every turn that belongs to them, as one forget
+with the checks above. It writes one more audit entry, `erase_subject`, that
+holds a salted commitment to the user's name and a digest of the erase entries
+it covers. The receipt carries counts, the erase refs, the audit head and its
+own SHA-256, and holds no erased text and no user name. `verify-erasure`
+recomputes the hash and checks the receipt against the audit chain, so an
+edited receipt or a log with the entry removed fails. `--emit-opening` prints
+the commitment's salt once, to a terminal; with it you can show later which
+user a receipt is about.
+
+A turn written from schema 6 records its user. An older turn does not, and
+when nobody's memory cites it and its session is shared with another user,
+mneme cannot tell whose it is: the turn stays, the receipt counts it
+(`turns_not_attributable`), and you can erase it by turn id or session.
+
+Mneme erases one user's records from this store and returns a receipt you can
+verify; it does not make its operator compliant with a data-protection law,
+because copies outside the store, the recipients of the data and the legal
+grounds for erasure are the operator's to handle.
 
 `update` edits a memory's text while keeping its provenance, and `supersede`
 closes a fact while keeping it for history. From schema 5 their audit entries
 hold salted commitments to the old and new versions instead of plain hashes.
 The salts sit in the store under the memory they describe, so the history can
 be checked while the memory lives. An erase deletes the salts with the rows,
-and the commitments then open to nothing. The entries keep the memory's
-content-derived id, which the receipt counts. Entries written before schema 5
-keep plain hashes, and the erase receipt counts them. Tamper any entry and the
-chain breaks.
+and the commitments then open to nothing. From schema 6 the entries name the
+memory by a random alias, never by its content-derived id, and an erase
+deletes the alias with the rows, so nothing in the log can confirm a guess of
+what the memory said. `mneme audit` shows which memory an alias belongs to
+while that memory lives. Entries written before schema 6 keep the id, and
+entries from before schema 5 also keep plain hashes; when an erase removes a
+row they name, the receipt reports `audit_rows_name_erased_ids`. Tamper any
+entry and the chain breaks.
 
 In 0.4.2 and earlier, `forget` deleted the memory row only and left the raw
 turn in the store. `mneme status` counts those forget entries and the turns no

@@ -128,7 +128,7 @@ def test_audit_verifies_in_the_library_and_the_standalone_verifier(tmp_path):
     assert proc.stdout.startswith("MATCH")
 
 
-def test_erase_rows_use_random_refs_and_only_earlier_rows_keep_the_content_id(tmp_path):
+def test_erase_rows_use_random_refs_and_no_audit_row_keeps_the_content_id(tmp_path):
     db = tmp_path / "mneme.db"
     memory = _memory(db)
     denver = _atom(memory, "Denver")
@@ -142,10 +142,11 @@ def test_erase_rows_use_random_refs_and_only_earlier_rows_keep_the_content_id(tm
     assert len(erase_rows) == 3                           # two atoms and one turn
     assert all(re.fullmatch(r"er_[0-9a-f]{24}", r["memory_id"]) for r in erase_rows)
     naming = [row["ord"] for row in rows if denver in "|".join(map(str, tuple(row)))]
-    assert naming == earlier and len(earlier) == 1
-    assert receipt["residue"]["legacy_audit_rows"]["count"] == 1
+    assert len(earlier) == 1                     # the update's row, written before
+    assert naming == []                          # schema 6: it names an alias, not the id
+    assert receipt["residue"]["legacy_audit_rows"]["count"] == 0
     memory.close()
-    assert db.read_bytes().count(denver.encode("ascii")) == 1
+    assert db.read_bytes().count(denver.encode("ascii")) == 0
 
 
 def test_erase_before_value_is_neither_a_content_hash_nor_a_digest_of_the_text():

@@ -7,7 +7,7 @@ so a format change never surfaces as a raw sqlite traceback.
 """
 from __future__ import annotations
 
-SCHEMA_VERSION = "5"
+SCHEMA_VERSION = "6"
 
 # meta keys. store_id is a random id that names this store's replay snapshot
 # directory; the high-water mark only moves up, so a newer mneme can tell that
@@ -23,7 +23,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS turns (
     id TEXT PRIMARY KEY, session TEXT NOT NULL, role TEXT NOT NULL,
     text TEXT NOT NULL, ord INTEGER NOT NULL, content_sha256 TEXT NOT NULL,
-    origin TEXT NOT NULL DEFAULT ''
+    origin TEXT NOT NULL DEFAULT '', "user" TEXT
 );
 CREATE TABLE IF NOT EXISTS memories (
     id TEXT PRIMARY KEY, layer TEXT NOT NULL, session TEXT, "user" TEXT NOT NULL DEFAULT '',
@@ -54,6 +54,14 @@ CREATE TABLE IF NOT EXISTS merges (
     dropped_id TEXT PRIMARY KEY, kept_id TEXT NOT NULL, source_ids TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_merges_kept ON merges(kept_id);
+-- schema 6: the name an audit row uses for a memory. A memory's id is derived
+-- from its text, so an audit row that named it could confirm a guess of that
+-- text after an erase. Update, supersede and consolidation entries name this
+-- random alias instead (audit_blind.py), and an erase deletes the alias.
+CREATE TABLE IF NOT EXISTS aliases (
+    memory_id TEXT PRIMARY KEY, alias TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_aliases_alias ON aliases(alias);
 """
 
 # (table, column, decl) added after the first published schema; applied only
@@ -64,4 +72,8 @@ MIGRATIONS = (
     ("memories", '"user"', "TEXT NOT NULL DEFAULT ''"),
     ("memories", "source_hashes", "TEXT NOT NULL DEFAULT '{}'"),
     ("turns", "origin", "TEXT NOT NULL DEFAULT ''"),
+    # schema 6: the user a turn belongs to, so a subject erase can select it.
+    # NULL on rows written before schema 6 (erase_subject.py attributes those
+    # through the memories that cite them).
+    ("turns", '"user"', "TEXT"),
 )
