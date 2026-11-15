@@ -288,7 +288,9 @@ Mneme keeps everything above on your machine. What leaves it is what you send:
 turns given to an LLM extractor or an embedder go to that model's provider,
 and so does any result an MCP client reads (recall, provenance, forget
 previews). The MCP client also keeps those results in its own session history
-on your machine. An erase cannot reach those copies.
+on your machine. An erase cannot reach those copies. In a program,
+`mneme.locality.describe(memory)` reports whether that instance uses a
+caller-supplied extractor or embedder, the two edges that can send text out.
 
 Use one mneme version per database file. An older mneme that reopens a
 database a newer one wrote gives the rows it writes only its own, older

@@ -148,6 +148,22 @@ def test_the_default_extractor_and_embedder_are_local(tmp_path):
     memory.close()
 
 
+def test_locality_report_names_an_injected_extractor_or_embedder(tmp_path):
+    from mneme import locality
+    plain = AgentMemory(embed="ngram")
+    report = locality.describe(plain)
+    assert report["sends_text_off_machine"] is False
+    assert report["extractor"] == {"name": "rule/v1", "local": True, "note": locality.LOCAL}
+    assert report["embedder"]["local"] is True
+    assert locality.describe(AgentMemory())["embedder"]["note"] == "off"
+    remote = AgentMemory(extractor=LLMExtractor(base_url="http://127.0.0.1:9/v1"))
+    report = locality.describe(remote)
+    assert report["sends_text_off_machine"] is True
+    assert report["extractor"]["name"] == "llm/v1" and report["extractor"]["local"] is False
+    custom = AgentMemory(embedder=lambda text: [0.0])
+    assert locality.describe(custom)["sends_text_off_machine"] is True
+
+
 # -- the command line ----------------------------------------------------------
 
 def _cli_commands(tmp_path: Path, target: str) -> dict:
