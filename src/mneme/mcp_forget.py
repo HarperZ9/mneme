@@ -31,7 +31,10 @@ TOOL = {
                    "text) and deletes nothing; with the plan's digest, plus "
                    "allow_collateral when the plan lists collateral or duplicates, it "
                    "applies exactly that plan and returns a receipt of what it removed "
-                   "and what remains. Text previews only with include_previews.",
+                   "and what remains. Applying also removes replay snapshots and export "
+                   "files mneme wrote that hold an erased row, and rewrites the database "
+                   "file, which takes seconds on a large store. Text previews only with "
+                   "include_previews.",
     "inputSchema": {"type": "object", "required": ["memory_id"], "properties": {
         "memory_id": {"type": "string"},
         "reason": {"type": "string",

@@ -60,7 +60,8 @@ class AgentMemory:
         )
         for t in planned:
             if t.write:
-                self.store.add_turn(t.id, session, t.role, t.text, origin=t.origin)
+                self.store.add_turn(t.id, session, t.role, t.text, origin=t.origin,
+                                    user=user)
         receipts = []
         for aid, atom in atoms:
             r = self.store.add_memory(aid, "L1", atom.text, [atom.source_id],
@@ -202,14 +203,29 @@ class AgentMemory:
 
     # -- accountable editing -------------------------------------------------
     def forget(self, memory_id: str, reason: str = "", *, include_sources: bool = True,
-               allow_collateral: bool = False) -> dict | None:
+               allow_collateral: bool = False, keep_exports: bool = False) -> dict | None:
         """Erase a memory, its source turns and everything derived from them, and
         return the erase receipt (see erase.py). Raises CollateralError with the
         plan when other memories share a source turn, unless allow_collateral.
-        include_sources=False keeps the source turns. None if the memory is absent."""
+        include_sources=False keeps the source turns. Export files mneme wrote
+        that hold an erased row are removed unless keep_exports. None if the
+        memory is absent. The scrub rewrites the database, so a forget takes
+        longer on a larger store."""
         from .erase import forget_memory
         return forget_memory(self.store, memory_id, reason, include_sources=include_sources,
-                             allow_collateral=allow_collateral)
+                             allow_collateral=allow_collateral, keep_exports=keep_exports)
+
+    def forget_subject(self, user: str, reason: str = "", **options) -> dict:
+        """Erase every record of one user and return a hashed erasure receipt
+        (erase_subject.py). Options: allow_collateral, keep_exports, emit_opening."""
+        from .erase_subject import forget_subject
+        return forget_subject(self.store, user, reason=reason, **options)
+
+    def verify_subject_erasure(self, receipt: dict, *, user: str | None = None,
+                               salt: str | None = None) -> dict:
+        """Check a subject erasure receipt against this store's audit chain."""
+        from .erase_subject import verify
+        return verify(self.store, receipt, user=user, salt=salt)
 
     def update(self, memory_id: str, new_text: str, reason: str = "") -> dict | None:
         """Edit a memory's text, keeping its provenance and recording the
@@ -220,13 +236,22 @@ class AgentMemory:
         """The append-only, hash-chained history of every erase, forget, update
         and supersede, with a
         verify verdict. What was known and when it changed is re-checkable."""
+        from . import audit_blind
+        from .erase_index import has_table
         rows = self.store.audit_log()
+        conn = self.store.conn
+        live = audit_blind.live_ids(conn) if has_table(conn, "aliases") else {}
+        log = []
+        for r in rows:
+            entry = {"op": r["op"], "memory_id": r["memory_id"],
+                     "layer": r["layer"], "before_sha": r["before_sha"],
+                     "after_sha": r["after_sha"], "reason": r["reason"],
+                     "entry_sha": r["entry_sha"]}
+            if r["memory_id"] in live:       # the alias of a memory that still exists
+                entry["live_memory_id"] = live[r["memory_id"]]
+            log.append(entry)
         return {"schema": "mneme.audit/1", "entries": len(rows),
-                "chain_intact": self.store.verify_audit(),
-                "log": [{"op": r["op"], "memory_id": r["memory_id"],
-                         "layer": r["layer"], "before_sha": r["before_sha"],
-                         "after_sha": r["after_sha"], "reason": r["reason"],
-                         "entry_sha": r["entry_sha"]} for r in rows]}
+                "chain_intact": self.store.verify_audit(), "log": log}
 
     # -- scenarios (L2) ------------------------------------------------------
     def build_scenarios(self, session: str, *, min_shared: int = 1,

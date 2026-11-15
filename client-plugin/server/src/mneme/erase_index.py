@@ -149,6 +149,14 @@ def _owned(index: Index, turn_id: str, session: str, by_session, users, sessions
     return session in sessions
 
 
+session_users = _session_users
+
+
+def owned_by(index: Index, turn_id: str, session: str, by_session, users: set[str]) -> bool:
+    """True when a turn with no user of its own belongs to `users` (see `_owned`)."""
+    return _owned(index, turn_id, session, by_session, users, set())
+
+
 def duplicates(index: Index, turns: dict, texts, *, skip_turns: set[str],
                skip_memories: set[str], users: set[str],
                sessions: set[str]) -> tuple[set[str], set[str]]:

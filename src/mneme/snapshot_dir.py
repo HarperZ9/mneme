@@ -22,7 +22,9 @@ refused.
 
 On POSIX an unlink succeeds while another process holds the file open, and
 that process can keep reading it. A snapshot removed while its creating
-process still runs is therefore reported as a copy that may remain.
+process still runs is therefore reported as a copy that may remain. Every
+snapshot is overwritten with zeros before it is unlinked (wipe.py), so the
+freed disk blocks and a handle that outlives the unlink hold no memory text.
 """
 from __future__ import annotations
 
@@ -37,6 +39,7 @@ import logging
 import tempfile
 from pathlib import Path
 
+from . import wipe
 from .audit_writer import meta_get, meta_set
 from .os_facts import known_local_appdata as _known_local_appdata
 from .os_facts import pid_alive as _pid_alive
@@ -158,7 +161,7 @@ def _remove_with_sidecars(path: Path) -> bool:
     ok = True
     for candidate in (path, *(Path(f"{path}{s}") for s in SIDECARS)):
         try:
-            candidate.unlink()
+            wipe.overwrite_and_unlink(candidate)     # zeros first: see wipe.py
         except FileNotFoundError:
             pass
         except OSError:
@@ -238,6 +241,17 @@ def _directories(store_id: str | None, source_path: Path | None) -> list[Path]:
     """The keyed directory and the by-path directory a store's snapshots can use."""
     found = {store_dir(store_id, None), store_dir(None, source_path)}
     return sorted(d for d in found if d is not None)
+
+
+def store_dirs_of(store_id: str | None, source_path: Path | None) -> list[Path]:
+    """The directories that hold a store's snapshots and its export registry."""
+    found = _directories(store_id, source_path)
+    for directory in found:
+        check_bound_path(directory)
+    return found
+
+
+private_dir = _private_dir
 
 
 def store_snapshot_counts(store_id: str | None, source_path: Path | None) -> dict:

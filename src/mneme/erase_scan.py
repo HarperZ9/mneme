@@ -43,6 +43,7 @@ _BLOCK = 1 << 25                   # 32 MiB, a multiple of 8
 _OVERLAP = 1 << 16                 # runs that cross a block edge stay whole
 _SEP = b"\x00" * 8                 # no text run spans eight NUL bytes
 _MAX_EXTEND = 1 << 12
+_SEARCH_PER_WORD = 32               # above this many distinct words, one pass
 SKIPPED = ("foreign_owner", "not_regular")      # not a copy of ours; others are unscanned
 
 
@@ -100,15 +101,32 @@ def _matches(block: bytes, index, keys: set[int], encoded, skip: set[int]):
     usable = len(block) - len(block) % _K
     if usable == 0:
         return
-    for value in keys.intersection(memoryview(block)[:usable].cast("Q")):
-        probe = value.to_bytes(_K, sys.byteorder)
-        for pos in _aligned(block, probe, usable):
-            for slot, offset in index[value]:
-                if encoded[slot][0] in skip:
-                    continue
-                begin, length = _extend(block, pos, encoded[slot][2], offset)
-                if length >= W:
-                    yield slot, begin, length
+    for value, pos in _places(block, keys, usable):
+        for slot, offset in index[value]:
+            if encoded[slot][0] in skip:
+                continue
+            begin, length = _extend(block, pos, encoded[slot][2], offset)
+            if length >= W:
+                yield slot, begin, length
+
+
+def _places(block: bytes, keys: set[int], usable: int):
+    """Yield (word, aligned position) for every indexed word in `block`.
+
+    With few distinct words present, a search per word is fastest. With many
+    (texts that share phrasing with the rows the store keeps), each search
+    walks the block again, so one pass over the block's words replaces them.
+    Both ways yield the same places."""
+    words = memoryview(block)[:usable].cast("Q")
+    present = keys.intersection(words)
+    if len(present) <= _SEARCH_PER_WORD:
+        for value in present:
+            for pos in _aligned(block, value.to_bytes(_K, sys.byteorder), usable):
+                yield value, pos
+        return
+    for number, value in enumerate(words):
+        if value in present:
+            yield value, number * _K
 
 
 def _aligned(block: bytes, probe: bytes, usable: int):

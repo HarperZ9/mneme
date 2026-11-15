@@ -69,8 +69,11 @@ def _other_snapshots(store_id, db: Path | None, texts, kept) -> dict:
 def named_only() -> list[dict]:
     """The copies an erase can name but neither scan nor remove."""
     return [
-        {"class": "exports", "note": "files written earlier by `mneme inspect --out` "
-                                     "or `mneme to-crucible`"},
+        {"class": "exports", "note": "files `mneme inspect --out` or `mneme "
+                                     "replay-crucible --out` wrote before mneme kept "
+                                     "an export registry (schema 6), moved or copied "
+                                     "exports, and any output a shell redirected to a "
+                                     "file, such as `mneme to-crucible > file`"},
         {"class": "copies_and_backups", "note": "backups, sync copies, and any other "
                                                 "copy of the database file"},
         {"class": "model_providers",

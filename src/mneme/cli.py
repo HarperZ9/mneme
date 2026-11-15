@@ -14,6 +14,7 @@ from pathlib import Path
 from . import __version__
 from .cli_forget import add_parsers as add_forget_parsers
 from .cli_state import add_parsers as add_state_parsers
+from .cli_subject import add_parsers as add_subject_parsers
 from .memory import AgentMemory
 from .store import SQLITE_SIDECAR_SUFFIXES, quiescent_snapshot_path
 
@@ -253,6 +254,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     add_forget_parsers(sub)                     # forget and scrub: cli_forget.py
     add_state_parsers(sub)                      # status and doctor: cli_state.py
+    add_subject_parsers(sub)                    # forget-subject, verify-erasure
 
     up = sub.add_parser("update", help="edit a memory's text, recording before/after in the audit log")
     up.add_argument("memory_id")
@@ -455,6 +457,9 @@ def cmd_replay_crucible(args) -> int:
                 file=sys.stderr,
             )
             return 1
+        from . import erase_exports
+        erase_exports.record_for(memory.store.conn, str(state), output, payload,
+                                 "replay-pack")
         publication_warning = _publish_new_file(output, payload)
         print(f"wrote Crucible replay pack to {output}")
         if publication_warning is not None:
@@ -476,10 +481,15 @@ def cmd_replay_crucible(args) -> int:
 
 def cmd_inspect(args) -> int:
     from .inspect import build_inspect, render_inspect_html
-    page = render_inspect_html(build_inspect(AgentMemory(args.state)))
+    memory = AgentMemory(args.state)
+    page = render_inspect_html(build_inspect(memory))
     if args.out:
-        with open(args.out, "w", encoding="utf-8") as f:
-            f.write(page)
+        from . import erase_exports
+        payload = page.encode("utf-8")
+        # registered first, so a later forget can find and remove this copy
+        erase_exports.record_for(memory.store.conn, args.state, args.out, payload, "inspect")
+        with open(args.out, "wb") as f:
+            f.write(payload)
         print(f"memory inspector -> {args.out}", file=sys.stderr)
     else:
         print(page)

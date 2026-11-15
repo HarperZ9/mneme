@@ -59,6 +59,16 @@ The receipt's `findings` lists a code for each check that did not pass, and its 
 
 The receipt also names what the erase cannot remove: audit rows written before the erase still name erased rows by content-derived id, which can confirm a guessed text when its source turn id is known (their update and supersede values are salted commitments from schema 5, and the erase deletes the salts; rows from before schema 5 keep plain hashes and are counted), freed disk blocks and deleted snapshots can hold old bytes until reused, and exports, backups, other copies of the database file, text already sent to a model provider and the MCP client's own session history are out of reach. `mneme scrub` removes the store's replay snapshots and finishes a scrub that another open connection blocked or an interrupt stopped.
 
+A forget also removes the export files mneme wrote (`inspect --out`, `replay-crucible --out`) that hold an erased row and are unchanged since mneme wrote them; `--keep-exports` leaves them and the receipt reports them. Replay snapshots, removed exports and the rollback journal of the erase are overwritten with zeros before they are unlinked. The VACUUM rewrites the whole database file, so a forget takes longer on a larger store: about 2 seconds on a store of 10,000 memories on the development machine.
+
+`mneme forget-subject <user>` erases every memory and turn of one user and prints a hashed receipt; `mneme verify-erasure receipt.json` checks that receipt against the audit chain. Mneme erases one user's records from this store and returns a receipt you can verify; it does not make its operator compliant with a data-protection law, because copies outside the store, the recipients of the data and the legal grounds for erasure are the operator's to handle.
+
+```bash
+mneme --state mneme.db forget-subject alice --dry-run
+mneme --state mneme.db forget-subject alice --reason "request 41" --yes > receipt.json
+mneme --state mneme.db verify-erasure receipt.json
+```
+
 A forget in 0.4.2 and earlier left the raw turn in the store. `mneme status` counts those forget entries and the turns no memory cites; `mneme forget <turn_id> --turn` erases such a turn.
 
 ## MCP
@@ -83,7 +93,7 @@ Descriptors remain declarative: no executable commands, host state paths, or dat
 
 ## Limits
 
-Origin rechecks are opt-in and profile-bound. Supported Gather docs or file-read receipts compare normalized decoded text; Mneme does not fetch network origins or prove raw-byte integrity for those receipts. Crucible replay verifies Mneme's sealed measurements and does not independently read external sources. A forget reaches the database file and its replay snapshots, and scans other snapshots it can find; it does not reach exports, backups, copies of the file made elsewhere, text already sent to a model provider through an LLM extractor, an embedder or an MCP client, or the results an MCP client keeps in its own session history.
+Origin rechecks are opt-in and profile-bound. Supported Gather docs or file-read receipts compare normalized decoded text; Mneme does not fetch network origins or prove raw-byte integrity for those receipts. Crucible replay verifies Mneme's sealed measurements and does not independently read external sources. A forget reaches the database file, its replay snapshots and the export files mneme registered, and scans other snapshots it can find; it does not reach exports made before the registry or moved since, output redirected to a file, backups, copies of the file made elsewhere, text already sent to a model provider through an LLM extractor, an embedder or an MCP client, or the results an MCP client keeps in its own session history.
 
 ## 0.6.0 client distribution
 

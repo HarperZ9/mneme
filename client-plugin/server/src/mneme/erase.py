@@ -5,16 +5,16 @@ what was checked and what remains.
 replay snapshots, then recomputes the plan under the write lock and refuses a
 digest that no longer matches, so a refused erase changes nothing. In one
 transaction with `secure_delete` on, it deletes every row in the plan, appends
-one audit entry per erased row, deletes the salts of the erased memories'
-blinded history (audit_blind.py) and their merge links, and sets
-`meta.erase_pending` (erase_finish.py). An entry names a random erase ref,
-never the content-derived id, and its `before` value is a commitment
-`sha256("mneme.erase.v1" || 0x00 || salt || utf8(text))` whose 32-byte salt is
-never stored. The salts are returned only when the caller asks
-(`emit_openings`); the CLI prints them with --emit-opening and the MCP tool
-never asks. The reason is checked first (erase_reason.py).
+one audit entry per row, deletes the salts of the erased memories' blinded
+history, their audit aliases and their merge links (erase_rows.py), and sets
+`meta.erase_pending` (erase_finish.py). The salts of the erase commitments
+are returned only when the caller asks (`emit_openings`); the CLI prints them
+with --emit-opening and the MCP tool never asks. The reason is checked first
+(erase_reason.py). In a rollback-journal mode the journal of that transaction
+is overwritten before SQLite removes it (erase_journal.py).
 
-After the commit, this store's replay snapshots are removed, and
+After the commit, this store's replay snapshots are overwritten and removed,
+registered export files that hold an erased row are removed (erase_exports.py), and
 `scrub_store` checkpoints a WAL database and runs VACUUM with
 `temp_store=MEMORY` (so the transient copy stays out of the OS temp
 directory). The receipt (erase_receipt.py) removes the snapshots again, scans
@@ -27,16 +27,12 @@ because the rows are already gone; the marker stays for `mneme scrub`.
 """
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
-import secrets
 import sqlite3
-from dataclasses import dataclass
 from pathlib import Path
 
-from . import audit_blind, audit_writer, erase_finish, erase_outside, snapshot_dir
-from .erase_index import cited
+from . import (erase_exports, erase_finish, erase_journal, erase_outside, erase_rows,
+               snapshot_dir)
 from .erase_plan import EraseTargetNotFound, Selection, plan_erase
 from .erase_reason import ErasedTextInReasonError, check_reason
 from .erase_receipt import RECEIPT_SCHEMA, build_receipt, db_path, remove_snapshots
@@ -46,7 +42,7 @@ __all__ = ["CollateralError", "EraseTargetNotFound", "ErasedTextInReasonError",
            "Selection", "StalePlanError", "apply_erase", "forget_memory",
            "plan_erase", "scrub_store"]
 
-COMMITMENT_TAG = b"mneme.erase.v1"
+COMMITMENT_TAG = erase_rows.COMMITMENT_TAG
 CHECKPOINT_RETRY_SECONDS = 5.0
 SCRUB_REMEDY = "close other connections to this database, then run `mneme scrub`"
 UNVERIFIED_REMEDY = ("the rows are deleted, but the scrub, snapshot removal or residual "
@@ -76,113 +72,55 @@ def _commit(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-@dataclass
-class _Subject:
-    table: str
-    id: str
-    layer: str
-    text: str
-    content_sha256: str
-    origin: str = ""
-
-    def locators(self) -> tuple[str, ...]:
-        """The origin's ref and source digest: erased too, and never boilerplate."""
-        try:
-            origin = json.loads(self.origin) if self.origin else {}
-        except ValueError:
-            return ()
-        if not isinstance(origin, dict):
-            return ()
-        return tuple(str(origin[k]) for k in ("ref", "sha256") if origin.get(k))
-
-
-def _subjects(conn: sqlite3.Connection, plan: dict) -> list[_Subject]:
-    out = []
-    for memory_id in plan["memories"]:
-        r = conn.execute("SELECT layer, text, content_sha256 FROM memories WHERE id=?",
-                         (memory_id,)).fetchone()
-        out.append(_Subject("memories", memory_id, r[0], r[1], r[2]))
-    for turn_id in plan["turns"]:
-        r = conn.execute("SELECT text, content_sha256, origin FROM turns WHERE id=?",
-                         (turn_id,)).fetchone()
-        out.append(_Subject("turns", turn_id, "L0", r[0], r[1], r[2] or ""))
-    return out
-
-
-def _commitment(text: str) -> tuple[bytes, str]:
-    salt = secrets.token_bytes(32)
-    body = COMMITMENT_TAG + b"\x00" + salt + text.encode("utf-8")
-    return salt, hashlib.sha256(body).hexdigest()
-
-
-def _delete_and_audit(conn: sqlite3.Connection, subjects, reason: str) -> list[dict]:
-    order = {"L3": 0, "L2": 1, "L1": 2, "L0": 3}
-    shuffled = list(subjects)
-    secrets.SystemRandom().shuffle(shuffled)
-    shuffled.sort(key=lambda s: (s.table == "turns", order.get(s.layer, 4)))
-    openings = []
-    for subject in shuffled:
-        conn.execute(f"DELETE FROM {subject.table} WHERE id=?", (subject.id,))
-        salt, before = _commitment(subject.text)
-        ref = "er_" + secrets.token_hex(12)
-        audit_writer.append(conn, "erase", ref, subject.layer, before, "", reason)
-        openings.append({"erase_ref": ref, "subject_id": subject.id,
-                         "layer": subject.layer, "salt": salt.hex()})
-    return openings
-
-
-def _identifiers(subjects, plan: dict) -> list[str]:
-    """Values that could confirm a guess of an erased text if a reason kept them."""
-    values = [plan["plan_sha256"], *plan["merged_away"]]
-    for subject in subjects:
-        values += [subject.id, subject.content_sha256, *subject.locators()]
-    return values
-
-
-def _delete_merges(conn: sqlite3.Connection, plan: dict) -> int:
-    memories, dropped, turns = set(plan["memories"]), set(plan["merged_away"]), set(plan["turns"])
-    doomed = [d for d, kept, raw in conn.execute(
-                  "SELECT dropped_id, kept_id, source_ids FROM merges")
-              if kept in memories or d in dropped or set(cited(raw)) & turns]
-    for dropped_id in doomed:
-        conn.execute("DELETE FROM merges WHERE dropped_id=?", (dropped_id,))
-    return len(doomed)
-
-
-def _erase_in_transaction(store, selection: Selection, expected: str, reason: str) -> dict:
+def _erase_in_transaction(store, selection: Selection, expected: str, reason: str,
+                          options: dict) -> dict:
     conn = store.conn
     plan = plan_erase(store, selection)
     if plan["plan_sha256"] != expected:
         raise StalePlanError(
             "stale plan: the store changed since the plan was made; plan again "
             "and confirm the new plan_sha256")
-    subjects = _subjects(conn, plan)
+    subjects = erase_rows.subjects(conn, plan)
     texts = [s.text for s in subjects]
-    check_reason(reason, texts + [x for s in subjects for x in s.locators()],
-                 _identifiers(subjects, plan))
+    identifiers = erase_rows.identifiers(subjects, plan)
+    check_reason(reason, texts + [x for s in subjects for x in s.locators()], identifiers)
     legacy = legacy_audit_rows(conn, subjects, plan["merged_away"])
-    openings = _delete_and_audit(conn, subjects, reason)
-    salts = audit_blind.delete_salts(conn, plan["memories"])
-    _delete_merges(conn, plan)
+    residue = erase_rows.residue_texts(conn, subjects, plan)
+    openings = erase_rows.delete_and_audit(conn, subjects, reason)
+    salts = erase_rows.forget_names(conn, plan)
     erase_finish.mark_pending(conn)
-    return {"plan": plan, "subject_texts": texts, "legacy": legacy,
-            "texts": texts + [s.origin for s in subjects if s.origin],
+    work = {"plan": plan, "subject_texts": residue, "legacy": legacy,
+            "texts": (texts + [s.origin for s in subjects if s.origin]
+                      + list(options.get("also_erased", ()))),
+            "identifiers": identifiers, "keep_exports": bool(options.get("keep_exports")),
             "openings": openings, "salts_deleted": salts}
+    if options.get("seal") is not None:        # a subject erase adds its own entry
+        options["seal"](conn, work)
+    return work
 
 
 def _pragma(conn: sqlite3.Connection, name: str) -> int:
     return int(conn.execute(f"PRAGMA {name}").fetchone()[0])
 
 
-def _committed(store, selection: Selection, expected: str, reason: str) -> dict:
+def _committed(store, selection: Selection, expected: str, reason: str,
+               options: dict) -> dict:
+    """The erase transaction, with its rollback journal held and then overwritten."""
     conn = store.conn
-    conn.execute("BEGIN IMMEDIATE")
+    mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+    journal = erase_journal.begin(conn)
     try:
-        work = _erase_in_transaction(store, selection, expected, reason)
-        _commit(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            work = _erase_in_transaction(store, selection, expected, reason, options)
+            _commit(conn)
+        except BaseException:
+            conn.rollback()
+            raise
     except BaseException:
-        conn.rollback()
+        erase_journal.restore(conn, journal)
         raise
+    work["journal_file"] = erase_journal.finish(conn, journal, mode)
     return work
 
 
@@ -204,6 +142,9 @@ def _after_commit(store, work: dict, reason: str, emit_openings: bool) -> dict:
     conn = store.conn
     try:
         work["snapshots_before"] = remove_snapshots(conn, db_path(conn))
+        work["exports"] = erase_exports.purge(
+            snapshot_dir.store_id_of(conn), db_path(conn), work["identifiers"],
+            work["subject_texts"], keep=work["keep_exports"])
         scrub = scrub_store(store)
         receipt = build_receipt(store, work, scrub, reason=reason,
                                 emit_openings=emit_openings)
@@ -218,8 +159,13 @@ def _after_commit(store, work: dict, reason: str, emit_openings: bool) -> dict:
 
 
 def apply_erase(store, selection: Selection, expected_sha256: str, *,
-                reason: str = "", emit_openings: bool = False) -> dict:
-    """Apply exactly the plan whose digest the caller confirmed."""
+                reason: str = "", emit_openings: bool = False,
+                keep_exports: bool = False, also_erased=(), seal=None) -> dict:
+    """Apply exactly the plan whose digest the caller confirmed.
+
+    `keep_exports` leaves registered export files in place (erase_exports.py).
+    `also_erased` adds strings to the residual scan and `seal` runs inside the
+    transaction; a subject erase uses both (erase_subject.py)."""
     if store.read_only:
         raise ValueError("erase needs a writable store; this one was opened read-only")
     conn = store.conn
@@ -231,7 +177,9 @@ def apply_erase(store, selection: Selection, expected_sha256: str, *,
     conn.execute("PRAGMA secure_delete=ON")
     conn.execute("PRAGMA temp_store=MEMORY")
     try:
-        work = _committed(store, selection, expected_sha256, reason)
+        work = _committed(store, selection, expected_sha256, reason,
+                          {"keep_exports": keep_exports, "also_erased": also_erased,
+                           "seal": seal})
         return _after_commit(store, work, reason, emit_openings)
     finally:
         for name, value in prior.items():
@@ -239,7 +187,7 @@ def apply_erase(store, selection: Selection, expected_sha256: str, *,
 
 
 def forget_memory(store, memory_id: str, reason: str = "", *, include_sources: bool = True,
-                  allow_collateral: bool = False) -> dict | None:
+                  allow_collateral: bool = False, keep_exports: bool = False) -> dict | None:
     """The library forget: plan, refuse unconsented collateral or duplicates, apply."""
     selection = Selection(memories=(memory_id,), keep_sources=not include_sources)
     try:
@@ -248,7 +196,8 @@ def forget_memory(store, memory_id: str, reason: str = "", *, include_sources: b
         return None
     if (plan["collateral"] or plan["counts"]["duplicates"]) and not allow_collateral:
         raise CollateralError(plan)
-    return apply_erase(store, selection, plan["plan_sha256"], reason=reason)
+    return apply_erase(store, selection, plan["plan_sha256"], reason=reason,
+                       keep_exports=keep_exports)
 
 
 def _checkpoint(conn: sqlite3.Connection) -> str:
