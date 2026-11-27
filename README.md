@@ -71,7 +71,7 @@ python -m pip install -e .
 For a non-editable install from the public source repository:
 
 ```bash
-python -m pip install "flywheel-mneme @ git+https://github.com/HarperZ9/mneme.git"
+python -m pip install "git+https://github.com/HarperZ9/mneme.git"
 ```
 
 ## How it compares
@@ -115,11 +115,11 @@ Install it, run it once, then use the main feature. Each command below is real, 
 
    ```text
    $ python examples/tour.py
-   == 2. recall — with a receipt a third party can re-run ==
+   == 2. recall: with a receipt a third party can re-run ==
        [1.783] I prefer tea over coffee and I work in data science.
      re-ran the scorer: identical ranking (the recall is re-derivable)
 
-   == 3. drift — a memory whose source changes flags itself ==
+   == 3. drift: a memory whose source changes flags itself ==
      before: MATCH
      after a source changed: DRIFT (stale memory says so, it is not silently served)
    ```
@@ -156,7 +156,7 @@ Agent memory systems need evidence for two operational questions:
   hashes and re-checks them to detect drift, missing sources, or unverifiable
   grounding.
 
-Mneme stores that evidence with the memory workflow instead of leaving it as a
+Mneme stores that evidence inside the memory workflow without leaving it as a
 separate operator note.
 
 ## The 4-tier memory model
@@ -180,7 +180,7 @@ hits, their BM25 and vector scores, and the exact fusion rule. And `verify_recal
 ships the check: it re-runs the scorer over the same rows and confirms the ranking,
 so a fabricated or tampered recall is caught even if its definition hash still
 matches, and a store that changed no longer reproduces. The recall is auditable by a
-function you can put in CI, not a claim you take on faith.
+function you can put in CI with zero trust required.
 
 ```python
 from mneme import recall, verify_recall
@@ -209,7 +209,7 @@ mneme drift            # -> {"overall":"DRIFT","drifted":["…"], …}  exit 1 o
 Two details make that verdict hard to fake. A memory row has to reproduce its own
 content hash before any of its sources are looked at, which catches a direct edit
 of the text, the source list, or the criterion. Each cited source is then re-hashed
-from its actual fields rather than read back from the hash stored beside it,
+from its live fields without trusting the hash stored beside it,
 because trusting that stored value would let someone edit the database directly,
 leave a stale hash in place, and collect a `MATCH`. The check re-derives on both
 sides before it will agree with itself.
@@ -226,7 +226,7 @@ than as agreement.
 Nine conditions reach one of those three verdicts, and the drawing above
 lists every one of them. Four resolve to `DRIFT` and four to
 `UNVERIFIABLE`. Exactly one reaches `MATCH`, which is the shape of a check
-that has to earn agreement rather than assume it.
+that earns agreement by re-derivation.
 
 **Provenance on every memory.** Every atom names the turn it came from, the
 extractor, the criterion, and a content hash. The persona is not free text: it
@@ -320,7 +320,7 @@ traces to the receipt supplied by its intake tool. For supported local Gather
 docs receipts, `origin-recheck` can re-read the operator-approved file under
 `--allowed-root` and compare Gather's normalized decoded text hash. Legacy
 receipts do not prove raw byte integrity, and unsupported refs remain
-`UNVERIFIABLE` rather than silently promoted. `origin-recheck` opens Mneme state
+`UNVERIFIABLE` with zero silent promotion. `origin-recheck` opens Mneme state
 read-only, refuses local path aliases and unsupported refs, and reports `MATCH`,
 `DRIFT`, or `UNVERIFIABLE` without including source content in the report.
 Any intake tool that emits the receipt shape composes; mneme never imports gather. Named-user `remember` and
@@ -465,7 +465,7 @@ for each check that did not pass, and `status` is `erased` only when the list
 is empty. Otherwise `status` is the first that applies of
 `erased_residue_found`, `erased_copies_remain`, `incomplete` and
 `erased_sources_kept`. A failure after the commit gives `erased_unverified`
-instead: the rows are gone, but the receipt could not be built. Each finding
+when the rows are gone and the receipt could not be built. Each finding
 maps to one status:
 
 | Finding | Status | Meaning |
@@ -497,7 +497,7 @@ While a scrub step or the snapshot removal has not finished, and after
 The byte scan looks for runs of 16 bytes or more. A text under 16 bytes gets
 structural checks only: its rows are gone, no kept row repeats it whole, and,
 when it has 8 or more characters, no kept row holds it as a word. For such a
-text `erased` means the rows are gone, not that a byte scan found nothing.
+text `erased` means the rows are gone; it makes zero claim about raw disk byte scans.
 
 The receipt also names what an erase cannot remove. A write-ahead log is
 checkpointed and truncated, not overwritten, so its freed disk blocks can hold
@@ -540,7 +540,7 @@ grounds for erasure are the operator's to handle.
 
 `update` edits a memory's text while keeping its provenance, and `supersede`
 closes a fact while keeping it for history. From schema 5 their audit entries
-hold salted commitments to the old and new versions instead of plain hashes.
+hold salted commitments to the old and new versions in place of plain hashes.
 The salts sit in the store under the memory they describe, so the history can
 be checked while the memory lives. An erase deletes the salts with the rows,
 and the commitments then open to nothing. From schema 6 the entries name the
@@ -586,7 +586,7 @@ the tool result. `mneme.to_crucible` returns the existing
 callers must pass either `user` to select one tenant inside that configured
 state, or `all_users: true` to deliberately export every tenant visible to the
 server. Optional `session` filters must be non-empty strings; `layer` is limited
-to `L1`, `L2`, or `L3`. The `user` value is a selector, not an authentication
+to `L1`, `L2`, or `L3`. The `user` value acts as a selector without serving as an authentication
 boundary; the host still owns which state DB the server may open. Crucible
 export and replay fail when `MNEME_STATE` is unset or empty. `mneme.replay_crucible`
 consumes a decoded `crucible.replay-template/1` object and returns
@@ -668,11 +668,11 @@ terms, and each converts to the MIT license two years after its release.
 This tool is one lane of a family that holds a single belief steady across
 every surface: knowledge open to anyone who can attain the means; acceptance
 decided by external checks, never reputation; every result re-runnable;
-honest nulls first-class; ownership earned by comprehension; learning woven
+honest nulls on equal footing; ownership earned by comprehension; learning woven
 into the work. The full text lives in [CREDO.md](CREDO.md).
 The long form of this belief: [The Unbundling](https://github.com/HarperZ9/flywheel/blob/main/docs/essays/2026-07-13-the-unbundling.md).
 
----
+
 
 Built by **[Zain Dana Harper](https://harperz9.github.io)** in Seattle: evidence-first tools that leave a re-checkable artifact behind. The full workbench is at [Project Telos](https://harperz9.github.io).
 
