@@ -23,6 +23,8 @@ python -m pip install flywheel-mneme
 
 `flywheel-mneme` is the HarperZ9 distribution, published with PEP 740 attestations. The name `mneme-memory` on PyPI belongs to an unrelated project.
 
+mcp-name: io.github.harperz9/mneme
+
 Save two user turns as `turns.json`:
 
 ```json
