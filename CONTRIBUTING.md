@@ -13,7 +13,7 @@ Use focused regression tests for semantic changes, then run the relevant full su
 
 ## Data and state
 
-Use synthetic SQLite state for tests, examples, and MCP interop checks. Do not commit real user databases, local receipts, credentials, `.env` files, tokens, or private machine paths. `MNEME_STATE` is an operator binding for the MCP server, and `user` is a selector inside that configured state rather than an authentication boundary.
+Use synthetic SQLite state for tests, examples, and MCP interop checks. Do not commit real user databases, local receipts, credentials, `.env` files, tokens, or private machine paths. `MNEME_STATE` is an operator binding for the MCP server, and `user` selects a partition inside that configured state without acting as an authentication boundary.
 
 ## Replay and descriptors
 
