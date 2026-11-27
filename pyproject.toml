@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "AGPL-3.0-only"
 license-files = ["LICENSE", "NOTICE"]
-authors = [{ name = "Zain Dana Harper", email = "zaindharper@gmail.com" }]
+authors = [{ name = "Zain Dana Harper" }]
 keywords = ["agent-memory", "llm-memory", "long-term-memory", "provenance", "retrieval", "bm25", "rag"]
 classifiers = [
     "Programming Language :: Python :: 3.11",
